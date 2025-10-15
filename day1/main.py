@@ -9,8 +9,10 @@ import os
 import sys
 from typing import List, Dict
 
-import aiohttp
 from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+from langchain.schema import HumanMessage, SystemMessage, AIMessage
+from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -18,21 +20,22 @@ from rich.prompt import Prompt
 from rich.text import Text
 
 class GLMChatClient:
-    """Client for interacting with GLM API from z.ai"""
+    """Client for interacting with GLM API from z.ai using LangChain"""
 
-    def __init__(self, api_key: str, base_url: str = "https://api.z.ai/api/coding/paas/v4"):
+    def __init__(self, api_key: str, base_url: str = "https://api.z.ai/api/coding/paas/v4/"):
         self.api_key = api_key
         self.base_url = base_url
         self.console = Console()
-        self.session = None
 
-    async def __aenter__(self):
-        self.session = aiohttp.ClientSession()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self.session:
-            await self.session.close()
+        # Initialize LangChain ChatOpenAI with Z.AI configuration
+        self.llm = ChatOpenAI(
+            model="glm-4.6",
+            openai_api_key=api_key,
+            openai_api_base=base_url,
+            temperature=0.7,
+            max_tokens=1000,
+            streaming=False  # We'll handle streaming manually for better control
+        )
 
     async def chat_completion(
         self,
@@ -41,40 +44,73 @@ class GLMChatClient:
         temperature: float = 0.7,
         max_tokens: int = 1000
     ) -> str:
-        """Send chat completion request to GLM API"""
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": False
-        }
+        """Send chat completion request to GLM API using LangChain"""
 
         try:
-            async with self.session.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as response:
+            # Convert message format for LangChain
+            langchain_messages = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    langchain_messages.append(SystemMessage(content=msg["content"]))
+                elif msg["role"] == "user":
+                    langchain_messages.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    langchain_messages.append(AIMessage(content=msg["content"]))
 
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise Exception(f"API request failed with status {response.status}: {error_text}")
+            # Update LLM parameters if needed
+            self.llm.temperature = temperature
+            self.llm.max_tokens = max_tokens
 
-                data = await response.json()
-                return data["choices"][0]["message"]["content"]
+            # Call the model
+            response = await asyncio.get_event_loop().run_in_executor(
+                None, self.llm.invoke, langchain_messages
+            )
 
-        except asyncio.TimeoutError:
-            raise Exception("Request timed out")
+            return response.content
+
         except Exception as e:
             raise Exception(f"API request failed: {str(e)}")
+
+    async def chat_completion_streaming(
+        self,
+        messages: List[Dict[str, str]],
+        model: str = "glm-4.6",
+        temperature: float = 0.7,
+        max_tokens: int = 1000
+    ) -> str:
+        """Send streaming chat completion request to GLM API using LangChain"""
+
+        try:
+            # Convert message format for LangChain
+            langchain_messages = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    langchain_messages.append(SystemMessage(content=msg["content"]))
+                elif msg["role"] == "user":
+                    langchain_messages.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    langchain_messages.append(AIMessage(content=msg["content"]))
+
+            # Create streaming LLM
+            streaming_llm = ChatOpenAI(
+                model=model,
+                openai_api_key=self.api_key,
+                openai_api_base=self.base_url,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                streaming=True,
+                callbacks=[StreamingStdOutCallbackHandler()]
+            )
+
+            # Call the streaming model
+            response = await asyncio.get_event_loop().run_in_executor(
+                None, streaming_llm.invoke, langchain_messages
+            )
+
+            return response.content
+
+        except Exception as e:
+            raise Exception(f"Streaming API request failed: {str(e)}")
 
 
 class ChatInterface:
@@ -286,9 +322,9 @@ async def main():
         sys.exit(1)
 
     # Create chat client and interface
-    async with GLMChatClient(api_key) as client:
-        chat_interface = ChatInterface(client)
-        await chat_interface.run()
+    client = GLMChatClient(api_key)
+    chat_interface = ChatInterface(client)
+    await chat_interface.run()
 
 
 if __name__ == "__main__":
