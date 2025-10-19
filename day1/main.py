@@ -99,6 +99,53 @@ class ErrorResponse(BaseModel):
     suggestion: Optional[str] = Field(default=None, description="Suggested resolution or workaround")
 
 
+# Technical Specification Collector Models
+class RequirementCategory(str, Enum):
+    """Categories of requirements for technical specifications"""
+    FUNCTIONAL = "functional"
+    NON_FUNCTIONAL = "non_functional"
+    TECHNICAL = "technical"
+    BUSINESS = "business"
+    UI_UX = "ui_ux"
+    SECURITY = "security"
+    PERFORMANCE = "performance"
+
+
+class Requirement(BaseModel):
+    """Individual requirement with metadata"""
+    id: str = Field(description="Unique identifier for the requirement")
+    category: RequirementCategory = Field(description="Category of the requirement")
+    title: str = Field(description="Brief title of the requirement")
+    description: str = Field(description="Detailed description of the requirement")
+    priority: str = Field(description="Priority level (high, medium, low)")
+    acceptance_criteria: Optional[List[str]] = Field(default=None, description="Criteria for requirement acceptance")
+    dependencies: Optional[List[str]] = Field(default=None, description="Dependencies on other requirements")
+
+
+class TechnicalSpecification(BaseModel):
+    """Complete technical specification document"""
+    project_name: str = Field(description="Name of the project")
+    project_description: str = Field(description="Brief description of the project")
+    requirements: List[Requirement] = Field(description="List of all requirements")
+    completeness_score: float = Field(description="Score from 0 to 1 indicating completeness")
+    missing_categories: List[RequirementCategory] = Field(description="Categories that need more requirements")
+    next_questions: List[str] = Field(description="Suggested questions to gather missing information")
+    is_ready_for_review: bool = Field(description="Whether the specification is ready for review")
+
+
+class TZCollectorState(BaseModel):
+    """State tracking for technical specification collection"""
+    phase: str = Field(description="Current phase of collection (initial, gathering, reviewing, complete)")
+    project_type: Optional[str] = Field(default=None, description="Type of project being specified")
+    current_category: Optional[RequirementCategory] = Field(default=None, description="Currently focused category")
+    requirements_count: int = Field(description="Total number of requirements collected")
+    last_completed_category: Optional[RequirementCategory] = Field(default=None, description="Last category that was completed")
+    should_complete: bool = Field(default=False, description="Whether collection should be considered complete")
+    accumulated_requirements: List[Requirement] = Field(default_factory=list, description="All requirements collected so far")
+    asked_questions: List[str] = Field(default_factory=list, description="Questions that have already been asked")
+    collected_info: Dict[str, str] = Field(default_factory=dict, description="Key information collected from user")
+
+
 class GLMChatClient:
     """Client for interacting with GLM API from z.ai using LangChain"""
 
@@ -243,9 +290,32 @@ class GLMChatClient:
 
             # Create chain and invoke
             chain = prompt | llm | parser
-            result = await asyncio.get_event_loop().run_in_executor(
+            raw_result = await asyncio.get_event_loop().run_in_executor(
                 None, chain.invoke, {"input": final_input}
             )
+
+            # Validate result is a Pydantic model
+            if not isinstance(raw_result, schema):
+                # Try to convert dict to Pydantic model
+                if isinstance(raw_result, dict):
+                    try:
+                        result = schema.model_validate(raw_result)
+                    except Exception as validation_error:
+                        # Fallback: create minimal valid response
+                        result = schema.model_validate({
+                            "project_name": "Unknown Project",
+                            "project_description": "Error during validation",
+                            "requirements": [],
+                            "completeness_score": 0.0,
+                            "missing_categories": list(RequirementCategory),
+                            "next_questions": ["Please provide more details"],
+                            "is_ready_for_review": False
+                        })
+                        print(f"DEBUG: Validation error handled: {validation_error}")
+                else:
+                    result = raw_result
+            else:
+                result = raw_result
 
             return result
 
@@ -290,8 +360,16 @@ class GLMChatClient:
         """Detect which schema would be most appropriate for the user input"""
         user_input_lower = user_input.lower()
 
+        # Technical specification detection
+        if any(word in user_input_lower for word in [
+            'тз', 'техническое задание', 'требования', 'specification', 'requirements',
+            'project requirements', 'система', 'приложение', 'разработка', 'проект',
+            'создать', 'разработать', 'спроектировать', 'спецификация'
+        ]):
+            return TechnicalSpecification
+
         # Creative content detection
-        if any(word in user_input_lower for word in ['joke', 'story', 'poem', 'creative', 'funny', 'humor']):
+        elif any(word in user_input_lower for word in ['joke', 'story', 'poem', 'creative', 'funny', 'humor']):
             return CreativeResponse
 
         # Data extraction detection
@@ -315,6 +393,8 @@ class ChatInterface:
         self.console = Console()
         self.conversation_history: List[Dict[str, str]] = []
         self.structured_mode = StructuredOutputMode.NORMAL
+        self.tz_collector_state: Optional[TZCollectorState] = None
+        self.tz_mode = False
 
     def display_welcome(self):
         """Display welcome message"""
@@ -327,6 +407,7 @@ Welcome to your AI assistant powered by GLM API from z.ai!
 - Type `/help` to see this help
 - Type `/clear` to clear conversation history
 - Type `/structured` to toggle structured output mode
+- Type `/tz` to start technical specification collector mode
 - Type `/exit` or `Ctrl+C` to quit
 
 **Features:**
@@ -335,6 +416,7 @@ Welcome to your AI assistant powered by GLM API from z.ai!
 - Conversation history
 - Streaming responses
 - **Structured output** with Pydantic schemas
+- **Technical Specification collector** - interactive ТЗ gathering
         """
 
         panel = Panel(
@@ -357,6 +439,7 @@ Welcome to your AI assistant powered by GLM API from z.ai!
 | `/help` | Show this help message |
 | `/clear` | Clear conversation history |
 | `/structured` | Toggle structured output mode on/off |
+| `/tz` | Start Technical Specification collector mode |
 | `/exit` | Exit the chat application |
 | `Ctrl+C` | Emergency exit |
 
@@ -366,7 +449,15 @@ When structured mode is **ON**, responses are formatted as structured data with:
 - **StructuredAnswer**: Detailed answers with bullet points
 - **CreativeResponse**: Jokes, stories, poems with metadata
 - **DataExtraction**: Extracted information organized by keys
+- **TechnicalSpecification**: Complete technical specifications
 - **ErrorResponse**: Structured error information
+
+## Technical Specification Mode (`/tz`)
+Interactive ТЗ collection with automatic completion detection:
+- **Smart questions** to gather project requirements
+- **Category-based** collection (functional, non-functional, technical, etc.)
+- **Automatic stopping** when requirements are complete
+- **Ready-to-use** technical specification document
 
 ## Tips
 - The AI remembers previous messages in the conversation
@@ -482,6 +573,357 @@ When structured mode is **ON**, responses are formatted as structured data with:
             self.console.print("[dim]Responses will use normal markdown formatting.[/dim]")
         self.console.print()
 
+    def start_tz_mode(self):
+        """Start Technical Specification collector mode"""
+        self.tz_mode = True
+        self.tz_collector_state = TZCollectorState(
+            phase="initial",
+            requirements_count=0
+        )
+
+        self.console.print("[green]🎯 Technical Specification Collector Mode[/green]")
+        self.console.print("[dim]I'll help you create a complete technical specification.")
+        self.console.print("[dim]I'll ask targeted questions and automatically detect when we have enough information.[/dim]")
+        self.console.print()
+
+        # Add initial system message for TZ collection
+        tz_welcome = "Давайте создадим полное техническое задание для вашего проекта. Расскажите, что вы хотите разработать, и я буду задавать уточняющие вопросы для сбора всех необходимых требований."
+        self.conversation_history.append({"role": "assistant", "content": tz_welcome})
+
+        self.console.print("[bold magenta]AI Assistant[/bold magenta]")
+        panel = Panel(
+            Text(tz_welcome, style="white"),
+            title="[bold magenta]ТЗ Коллектор[/bold magenta]",
+            border_style="magenta",
+            padding=(1, 2)
+        )
+        self.console.print(panel)
+        self.console.print()
+
+    def update_tz_state(self, tz_response):
+        """Update TZ collector state based on response"""
+        if self.tz_collector_state:
+            # Handle both Pydantic objects and dictionaries
+            if hasattr(tz_response, 'requirements'):
+                requirements = tz_response.requirements
+                is_ready = tz_response.is_ready_for_review
+                next_questions = tz_response.next_questions if hasattr(tz_response, 'next_questions') else []
+            elif isinstance(tz_response, dict):
+                requirements = tz_response.get('requirements', [])
+                is_ready = tz_response.get('is_ready_for_review', False)
+                next_questions = tz_response.get('next_questions', [])
+            else:
+                requirements = []
+                is_ready = False
+                next_questions = []
+
+            # Update accumulated requirements
+            for req in requirements:
+                # Check if requirement already exists (by ID or title)
+                req_exists = False
+                for existing_req in self.tz_collector_state.accumulated_requirements:
+                    if (hasattr(req, 'id') and hasattr(existing_req, 'id') and req.id == existing_req.id) or \
+                       (hasattr(req, 'title') and hasattr(existing_req, 'title') and req.title == existing_req.title):
+                        req_exists = True
+                        break
+
+                if not req_exists:
+                    self.tz_collector_state.accumulated_requirements.append(req)
+
+            # Update asked questions
+            for question in next_questions:
+                if question not in self.tz_collector_state.asked_questions:
+                    self.tz_collector_state.asked_questions.append(question)
+
+            self.tz_collector_state.requirements_count = len(self.tz_collector_state.accumulated_requirements)
+            self.tz_collector_state.should_complete = is_ready
+
+            if is_ready:
+                self.tz_collector_state.phase = "complete"
+                self.console.print("[green]✓ Technical Specification is complete![/green]")
+                self.console.print("[dim]The specification is ready for review and implementation.[/dim]")
+                self.console.print()
+
+    def create_comprehensive_tz_response(self, current_response):
+        """Create comprehensive response that includes all accumulated requirements"""
+        if not self.tz_collector_state:
+            return current_response
+
+        # Get all accumulated requirements
+        all_requirements = list(self.tz_collector_state.accumulated_requirements)
+
+        # Add current response requirements if they're not already included
+        if hasattr(current_response, 'requirements'):
+            current_reqs = current_response.requirements
+        elif isinstance(current_response, dict):
+            current_reqs = current_response.get('requirements', [])
+        else:
+            current_reqs = []
+
+        for req in current_reqs:
+            req_exists = False
+            for existing_req in all_requirements:
+                if (hasattr(req, 'id') and hasattr(existing_req, 'id') and req.id == existing_req.id) or \
+                   (hasattr(req, 'title') and hasattr(existing_req, 'title') and req.title == existing_req.title):
+                    req_exists = True
+                    break
+
+            if not req_exists:
+                all_requirements.append(req)
+
+        # Calculate completeness based on all requirements
+        completeness_score = min(0.9, len(all_requirements) * 0.15)  # Progressive completeness
+
+        # Determine missing categories
+        categories_present = set()
+        for req in all_requirements:
+            if hasattr(req, 'category'):
+                categories_present.add(req.category)
+            elif isinstance(req, dict):
+                categories_present.add(req.get('category', 'unknown'))
+
+        all_categories = set(RequirementCategory)
+        missing_categories = list(all_categories - categories_present)
+
+        # Get next questions that haven't been asked
+        if hasattr(current_response, 'next_questions'):
+            current_questions = current_response.next_questions
+        elif isinstance(current_response, dict):
+            current_questions = current_response.get('next_questions', [])
+        else:
+            current_questions = []
+
+        # Filter out already asked questions
+        new_questions = [q for q in current_questions if q not in self.tz_collector_state.asked_questions]
+
+        # If no new questions from AI, let LLM handle it naturally (no forced generation)
+
+        # Determine if ready for review
+        is_ready = len(all_requirements) >= 5 and len(missing_categories) <= 2
+
+        # Create comprehensive response
+        if hasattr(current_response, 'project_name'):
+            project_name = current_response.project_name
+            project_description = current_response.project_description
+        elif isinstance(current_response, dict):
+            project_name = current_response.get('project_name', 'Проект')
+            project_description = current_response.get('project_description', 'Описание проекта')
+        else:
+            project_name = 'Проект'
+            project_description = 'Описание проекта'
+
+        comprehensive_tz = TechnicalSpecification(
+            project_name=project_name,
+            project_description=project_description,
+            requirements=all_requirements,
+            completeness_score=completeness_score,
+            missing_categories=list(missing_categories),
+            next_questions=new_questions[:3] if new_questions else current_questions[:3],  # Use AI questions or fallback to current
+            is_ready_for_review=is_ready
+        )
+
+        return comprehensive_tz
+
+    def remove_repeated_questions(self, questions):
+        """Remove questions that have been asked too many times"""
+        if not questions:
+            return []
+
+        # Simple heuristic: if questions are too generic, replace them
+        generic_patterns = [
+            "Какие еще аспекты проекта важны для вас?",
+            "Есть ли специфические требования, которые мы еще не обсудили?",
+            "Какие риски нужно учесть при разработке?"
+        ]
+
+        filtered_questions = []
+        for q in questions:
+            # Skip if it's a generic question that was asked before
+            if q in generic_patterns and q in self.tz_collector_state.asked_questions:
+                continue
+            filtered_questions.append(q)
+
+        return filtered_questions
+
+    async def handle_tz_collection(self, user_message: str):
+        """Handle technical specification collection process"""
+
+        # Store user input in collected info
+        if self.tz_collector_state:
+            # Extract key information from user message
+            self.tz_collector_state.collected_info[f"user_input_{len(self.tz_collector_state.collected_info)}"] = user_message
+
+        # Create comprehensive context from accumulated requirements
+        accumulated_context = ""
+        if self.tz_collector_state and self.tz_collector_state.accumulated_requirements:
+            accumulated_context = "\nУЖЕ СОБРАННЫЕ ТРЕБОВАНИЯ:\n"
+            for i, req in enumerate(self.tz_collector_state.accumulated_requirements, 1):
+                if hasattr(req, 'title') and hasattr(req, 'description'):
+                    accumulated_context += f"{i}. {req.title}: {req.description}\n"
+                elif isinstance(req, dict):
+                    accumulated_context += f"{i}. {req.get('title', 'Без названия')}: {req.get('description', 'Без описания')}\n"
+
+        asked_questions_context = ""
+        if self.tz_collector_state and self.tz_collector_state.asked_questions:
+            asked_questions_context = "\nУЖЕ ЗАДАННЫЕ ВОПРОСЫ (ИЗБЕГАТЬ ПОВТОРЕНИЯ):\n"
+            for q in self.tz_collector_state.asked_questions:
+                asked_questions_context += f"- {q}\n"
+
+        # Create specialized system prompt for TZ collection with full context
+        tz_system_prompt = f"""
+        Ты - профессиональный бизнес-аналитик, который помогает создавать полные технические задания.
+
+        ТЕКУЩАЯ ФАЗА: {self.tz_collector_state.phase if self.tz_collector_state else 'initial'}
+        УЖЕ СОБРАНО ТРЕБОВАНИЙ: {self.tz_collector_state.requirements_count if self.tz_collector_state else 0}
+
+        {accumulated_context}
+
+        {asked_questions_context}
+
+        ВАЖНО:
+        1. НЕ задавай вопросы, которые уже были заданы выше
+        2. Учитывай всю информацию, предоставленную ранее
+        3. Создавай вопросы РЕЛЕВАНТНЫЕ конкретному проекту (не универсальные)
+        4. Избегай общих вопросов вроде "сколько пользователей" для локальных утилит
+        5. ОБЯЗАТЕЛЬНО включи поле next_questions с 2-3 специфическими вопросами
+
+        Проанализируй текущий ответ пользователя и:
+        1. Извлеки новые требования из ответа
+        2. Объедини их с уже собранными требованиями
+        3. Определи, какие категории все еще нуждаются в дополнении
+        4. Сформулируй 2-3 КОНКРЕТНЫХ вопроса, УЧЕСТЫВАЯ ТИП ПРОЕКТА:
+           - Для калькулятора: операции, точность, интерфейс, особенности вычислений
+           - Для локальной программы: установка, требования к системе, особенности использования
+           - Для веб-приложения: браузеры, хостинг, пользователи, интерфейс
+        5. Оцени полноту ВСЕХ собранных требований (0.0 - 1.0)
+        6. Определи, готово ли ТЗ к передаче на разработку
+
+        СТРУКТУРА ОТВЕТА (ОБЯЗАТЕЛЬНО ЗАПОЛНИТЬ ВСЕ ПОЛЯ):
+        - project_name: название проекта
+        - project_description: краткое описание
+        - requirements: ВСЕ собранные требования с категориями
+        - completeness_score: оценка от 0.0 до 1.0
+        - missing_categories: категории для дополнения
+        - next_questions: 2-3 КОНКРЕТНЫХ, РЕЛЕВАНТНЫЕ вопроса
+        - is_ready_for_review: готово ли к рассмотрению
+
+        ВНИМАНИЕ: Поле next_questions ОБЯЗАТЕЛЬНО должно содержать 2-3 вопроса!
+        НЕ Оставляйте next_questions пустым!
+
+        Пример ХОРОШИХ вопросов для калькулятора:
+        - Какие математические операции должны поддерживаться?
+        - Нужна ли история вычислений или работа с памятью?
+        - Какой формат интерфейса предпочитается (кнопки, командная строка)?
+
+        Пример полного ответа в JSON формате:
+        {{
+          "project_name": "Калькулятор",
+          "project_description": "Локальный калькулятор на Python",
+          "requirements": [...],
+          "completeness_score": 0.4,
+          "missing_categories": ["technical", "ui_ux"],
+          "next_questions": [
+            "Какие математические операции должны поддерживаться?",
+            "Нужна ли история вычислений?"
+          ],
+          "is_ready_for_review": false
+        }}
+
+        Включи в ответ ВСЕ собранные требования, оценку полноты, ОБЯЗАТЕЛЬНО с вопросами в next_questions!
+        Отвечай на русском языке.
+        """
+
+        # Create message history with context preservation
+        tz_messages = []
+
+        # Keep system message with accumulated context
+        tz_messages.append({
+            "role": "system",
+            "content": tz_system_prompt
+        })
+
+        # Add recent conversation history (last 10 messages to maintain context)
+        recent_history = self.conversation_history[-10:]
+        tz_messages.extend(recent_history)
+
+        try:
+            # Get structured Technical Specification response
+            tz_response = await self.client.chat_completion_structured(
+                schema=TechnicalSpecification,
+                messages=tz_messages
+            )
+
+            # Debug: print response type
+            self.console.print(f"[dim]Response type: {type(tz_response)}[/dim]")
+
+            # Update collector state
+            self.update_tz_state(tz_response)
+
+            # Create comprehensive response that includes all accumulated requirements
+            comprehensive_response = self.create_comprehensive_tz_response(tz_response)
+
+            # Debug: check if original response has questions
+            original_questions = []
+            if hasattr(tz_response, 'next_questions'):
+                original_questions = tz_response.next_questions
+            elif isinstance(tz_response, dict):
+                original_questions = tz_response.get('next_questions', [])
+
+            self.console.print(f"[dim]DEBUG: Original AI questions: {original_questions}[/dim]")
+
+            # Update asked questions with the ones from comprehensive response (with filtering)
+            if hasattr(comprehensive_response, 'next_questions') and self.tz_collector_state:
+                filtered_questions = self.remove_repeated_questions(comprehensive_response.next_questions)
+                self.console.print(f"[dim]DEBUG: Filtered questions: {filtered_questions}[/dim]")
+                for question in filtered_questions:
+                    if question not in self.tz_collector_state.asked_questions:
+                        self.tz_collector_state.asked_questions.append(question)
+
+            # Add response to conversation history
+            if hasattr(comprehensive_response, 'model_dump'):
+                response_dict = comprehensive_response.model_dump()
+            else:
+                response_dict = comprehensive_response
+            response_text = str(response_dict)
+            self.conversation_history.append({"role": "assistant", "content": response_text})
+
+            # Display the structured response
+            self.display_structured_response(comprehensive_response)
+
+            # Check if collection should be completed
+            is_ready = False
+            if hasattr(tz_response, 'is_ready_for_review'):
+                is_ready = tz_response.is_ready_for_review
+            elif isinstance(tz_response, dict):
+                is_ready = tz_response.get('is_ready_for_review', False)
+
+            if is_ready:
+                self.tz_mode = False
+                self.console.print("[bold green]🎉 Техническое задание готово![/bold green]")
+                self.console.print("[dim]Режим сбора ТЗ завершен. Вы можете продолжить обычный диалог или использовать другие команды.[/dim]")
+                self.console.print()
+
+        except Exception as e:
+            # Enhanced error handling with debug info
+            self.console.print(f"[red]DEBUG: Error in TZ collection: {str(e)}[/red]")
+            self.console.print(f"[red]Error type: {type(e).__name__}[/red]")
+
+            # Try fallback to regular chat response
+            try:
+                fallback_response = await self.client.chat_completion(
+                    messages=tz_messages
+                )
+                self.conversation_history.append({"role": "assistant", "content": fallback_response})
+                await self.display_assistant_message(fallback_response)
+            except Exception as fallback_error:
+                # If fallback also fails, show structured error
+                error_response = ErrorResponse(
+                    error_type="TZ_Collection_Error",
+                    error_message=f"Primary error: {str(e)}. Fallback error: {str(fallback_error)}",
+                    suggestion="Попробуйте переформулировать ответ или используйте /clear для сброса"
+                )
+                self.display_structured_response(error_response)
+
     async def get_user_input(self) -> str:
         """Get user input with rich prompt"""
         try:
@@ -508,6 +950,10 @@ When structured mode is **ON**, responses are formatted as structured data with:
 
         elif command == '/structured':
             self.toggle_structured_mode()
+            return True
+
+        elif command == '/tz':
+            self.start_tz_mode()
             return True
 
         else:
@@ -544,37 +990,48 @@ When structured mode is **ON**, responses are formatted as structured data with:
                 # Show typing indicator
                 with self.console.status("[bold green]AI is thinking...[/bold green]", spinner="dots"):
                     try:
+                        # Check if TZ mode is active
+                        if self.tz_mode and self.tz_collector_state:
+                            # Handle Technical Specification collection
+                            await self.handle_tz_collection(user_message)
+
                         # Check if structured mode is enabled
-                        if self.structured_mode == StructuredOutputMode.STRUCTURED:
+                        elif self.structured_mode == StructuredOutputMode.STRUCTURED:
                             # Auto-detect schema type
                             schema_class = self.client.detect_schema_type(user_message)
 
-                            # Add system message about structured output
-                            structured_messages = self.conversation_history.copy()
-                            structured_messages.insert(0, {
-                                "role": "system",
-                                "content": f"You are a helpful assistant that provides structured responses. "
-                                f"Respond with valid JSON that matches the {schema_class.__name__} schema. "
-                                f"IMPORTANT: Output ONLY raw JSON without markdown formatting, backticks, or code blocks. "
-                                f"Be comprehensive, accurate, and provide complete responses that fully address the user's request."
-                            })
-
-                            # Get structured AI response
-                            structured_response = await self.client.chat_completion_structured(
-                                schema=schema_class,
-                                messages=structured_messages
-                            )
-
-                            # Convert structured response to string for history
-                            if hasattr(structured_response, 'model_dump'):
-                                response_dict = structured_response.model_dump()
+                            # Check if this is a technical specification request
+                            if schema_class == TechnicalSpecification:
+                                # Switch to TZ mode automatically
+                                self.start_tz_mode()
+                                await self.handle_tz_collection(user_message)
                             else:
-                                response_dict = structured_response
-                            response_text = str(response_dict)
-                            self.conversation_history.append({"role": "assistant", "content": response_text})
+                                # Regular structured response
+                                structured_messages = self.conversation_history.copy()
+                                structured_messages.insert(0, {
+                                    "role": "system",
+                                    "content": f"You are a helpful assistant that provides structured responses. "
+                                    f"Respond with valid JSON that matches the {schema_class.__name__} schema. "
+                                    f"IMPORTANT: Output ONLY raw JSON without markdown formatting, backticks, or code blocks. "
+                                    f"Be comprehensive, accurate, and provide complete responses that fully address the user's request."
+                                })
 
-                            # Display structured response
-                            self.display_structured_response(structured_response)
+                                # Get structured AI response
+                                structured_response = await self.client.chat_completion_structured(
+                                    schema=schema_class,
+                                    messages=structured_messages
+                                )
+
+                                # Convert structured response to string for history
+                                if hasattr(structured_response, 'model_dump'):
+                                    response_dict = structured_response.model_dump()
+                                else:
+                                    response_dict = structured_response
+                                response_text = str(response_dict)
+                                self.conversation_history.append({"role": "assistant", "content": response_text})
+
+                                # Display structured response
+                                self.display_structured_response(structured_response)
 
                         else:
                             # Normal mode - get regular AI response
