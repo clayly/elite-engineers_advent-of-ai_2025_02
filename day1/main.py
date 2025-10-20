@@ -28,6 +28,53 @@ from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
 
+def load_llm_config(config_path: str = "llm.json") -> dict:
+    """Load LLM configuration from JSON file with validation"""
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        # Validate and clamp temperature to safe range for z.ai API (0.0 to 1.0)
+        if "temperature" in config:
+            temp = config["temperature"]
+            if temp < 0.0:
+                print(f"Warning: Temperature {temp} is too low, setting to 0.0")
+                config["temperature"] = 0.0
+            elif temp > 1.0:
+                print(f"Warning: Temperature {temp} is too high for z.ai API, setting to 1.0")
+                config["temperature"] = 1.0
+
+        # Ensure max_tokens is reasonable
+        if "max_tokens" in config and config["max_tokens"] > 4000:
+            print(f"Warning: max_tokens {config['max_tokens']} may be too high, setting to 4000")
+            config["max_tokens"] = 4000
+
+        return config
+
+    except FileNotFoundError:
+        # Return default config if file doesn't exist
+        return {
+            "temperature": 0.7,
+            "max_tokens": 1000,
+            "model": "glm-4.6",
+            "streaming": False,
+            "top_p": 0.9,
+            "frequency_penalty": 0.0,
+            "presence_penalty": 0.0
+        }
+    except json.JSONDecodeError as e:
+        print(f"Warning: Invalid JSON in {config_path}, using defaults: {e}")
+        return {
+            "temperature": 0.7,
+            "max_tokens": 1000,
+            "model": "glm-4.6",
+            "streaming": False,
+            "top_p": 0.9,
+            "frequency_penalty": 0.0,
+            "presence_penalty": 0.0
+        }
+
+
 def extract_json_from_markdown(text: str) -> dict:
     """Extract JSON content from markdown code blocks."""
     # Try to find JSON blocks in ```json...``` format
@@ -154,26 +201,37 @@ class GLMChatClient:
         self.base_url = base_url
         self.console = Console()
 
+        # Load LLM configuration
+        self.llm_config = load_llm_config()
+
         # Initialize LangChain ChatOpenAI with Z.AI configuration
         self.llm = ChatOpenAI(
-            model="glm-4.6",
+            model=self.llm_config["model"],
             openai_api_key=api_key,
             openai_api_base=base_url,
-            temperature=0.7,
-            max_tokens=1000,
+            temperature=self.llm_config["temperature"],
+            max_tokens=self.llm_config["max_tokens"],
             streaming=False  # We'll handle streaming manually for better control
         )
 
     async def chat_completion(
         self,
         messages: List[Dict[str, str]],
-        model: str = "glm-4.6",
-        temperature: float = 0.7,
-        max_tokens: int = 1000
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None
     ) -> str:
         """Send chat completion request to GLM API using LangChain"""
 
         try:
+            # Reload config on every call to pick up live changes
+            current_config = load_llm_config()
+
+            # Use config values or provided parameters
+            effective_model = model or current_config["model"]
+            effective_temperature = temperature or current_config["temperature"]
+            effective_max_tokens = max_tokens or current_config["max_tokens"]
+
             # Convert message format for LangChain
             langchain_messages = []
             for msg in messages:
@@ -185,8 +243,8 @@ class GLMChatClient:
                     langchain_messages.append(AIMessage(content=msg["content"]))
 
             # Update LLM parameters if needed
-            self.llm.temperature = temperature
-            self.llm.max_tokens = max_tokens
+            self.llm.temperature = effective_temperature
+            self.llm.max_tokens = effective_max_tokens
 
             # Call the model
             response = await asyncio.get_event_loop().run_in_executor(
@@ -201,13 +259,21 @@ class GLMChatClient:
     async def chat_completion_streaming(
         self,
         messages: List[Dict[str, str]],
-        model: str = "glm-4.6",
-        temperature: float = 0.7,
-        max_tokens: int = 1000
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None
     ) -> str:
         """Send streaming chat completion request to GLM API using LangChain"""
 
         try:
+            # Reload config on every call to pick up live changes
+            current_config = load_llm_config()
+
+            # Use config values or provided parameters
+            effective_model = model or current_config["model"]
+            effective_temperature = temperature or current_config["temperature"]
+            effective_max_tokens = max_tokens or current_config["max_tokens"]
+
             # Convert message format for LangChain
             langchain_messages = []
             for msg in messages:
@@ -220,11 +286,11 @@ class GLMChatClient:
 
             # Create streaming LLM
             streaming_llm = ChatOpenAI(
-                model=model,
+                model=effective_model,
                 openai_api_key=self.api_key,
                 openai_api_base=self.base_url,
-                temperature=temperature,
-                max_tokens=max_tokens,
+                temperature=effective_temperature,
+                max_tokens=effective_max_tokens,
                 streaming=True,
                 callbacks=[StreamingStdOutCallbackHandler()]
             )
@@ -243,18 +309,25 @@ class GLMChatClient:
         self,
         schema: BaseModel,
         messages: List[Dict[str, str]],
-        temperature: float = 0.7,
-        max_tokens: int = 1000
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None
     ):
         """Send structured chat completion request using JsonOutputParser"""
         try:
+            # Reload config on every call to pick up live changes
+            current_config = load_llm_config()
+
+            # Use config values or provided parameters
+            effective_temperature = temperature or current_config["temperature"]
+            effective_max_tokens = max_tokens or current_config["max_tokens"]
+
             # Create base LLM
             llm = ChatOpenAI(
-                model="glm-4.6",
+                model=current_config["model"],
                 openai_api_key=self.api_key,
                 openai_api_base=self.base_url,
-                temperature=temperature,
-                max_tokens=max_tokens,
+                temperature=effective_temperature,
+                max_tokens=effective_max_tokens,
                 streaming=False
             )
 
@@ -322,13 +395,16 @@ class GLMChatClient:
         except Exception as e:
             # Fallback: try to extract JSON from markdown-wrapped response
             try:
+                # Reload config again for fallback (in case file changed since start of method)
+                fallback_config = load_llm_config()
+
                 # Create a simple LLM to get raw response
                 llm = ChatOpenAI(
-                    model="glm-4.6",
+                    model=fallback_config["model"],
                     openai_api_key=self.api_key,
                     openai_api_base=self.base_url,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
+                    temperature=effective_temperature,  # Keep original effective temperature
+                    max_tokens=effective_max_tokens,    # Keep original effective max_tokens
                     streaming=False
                 )
 
@@ -477,10 +553,36 @@ Interactive ТЗ collection with automatic completion detection:
         self.console.print()
 
     def clear_history(self):
-        """Clear conversation history"""
+        """Clear conversation history and reset all modes"""
+        # Clear conversation history
         self.conversation_history = []
-        self.console.print("[yellow]Conversation history cleared![/yellow]")
+
+        # Reset all modes to defaults
+        self.structured_mode = StructuredOutputMode.NORMAL
+        self.tz_mode = False
+        self.tz_collector_state = None
+
+        # Provide feedback about what was cleared
+        self.console.print("[yellow]✓ Conversation history cleared![/yellow]")
+        self.console.print("[dim]✓ Modes reset to defaults[/dim]")
+        self.console.print("[dim]✓ Technical specification state cleared[/dim]")
         self.console.print()
+
+        # Show current mode status
+        status_messages = []
+        if self.structured_mode == StructuredOutputMode.STRUCTURED:
+            status_messages.append("[green]Structured mode: ON[/green]")
+        else:
+            status_messages.append("[dim]Structured mode: OFF[/dim]")
+
+        if self.tz_mode:
+            status_messages.append("[green]Technical specification mode: ON[/green]")
+        else:
+            status_messages.append("[dim]Technical specification mode: OFF[/dim]")
+
+        if status_messages:
+            self.console.print(" | ".join(status_messages))
+            self.console.print()
 
     def display_user_message(self, message: str):
         """Display user message with nice formatting"""
