@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "langgraph-multiagent-system"
+version = "0.1.0"
+description = "Simple multiagent system using LangGraph with logging, tracing, and token counting"
+authors = [
+    {name = "Elite Engineers", email = "team@elite-engineers.com"}
+]
+dependencies = [
+    "langgraph>=1.0.1",
+    "langchain>=1.0.2",
+    "langchain-openai>=1.0.0",
+    "langchain-core>=1.0.0",
+    "openai>=2.6.0",
+    "tiktoken>=0.12.0",
+    "python-dotenv>=1.0.1",
+    "pydantic>=2.10.4",
+    "rich>=13.9.4",
+    "loguru>=0.7.2",
+]
+requires-python = ">=3.11"
+readme = "README.md"
+license = {text = "MIT"}
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/multiagent"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.24.0",
+    "black>=24.10.0",
+    "ruff>=0.8.6",
+    "mypy>=1.14.0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
