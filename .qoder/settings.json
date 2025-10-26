@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "ask": [
+      "Read(!/home/clayly/projects/zva-no-project/elite-engineers_advent-of-ai_2025_02/**)",
+      "Edit(!/home/clayly/projects/zva-no-project/elite-engineers_advent-of-ai_2025_02/**)"
+    ],
+    "allow": [
+      "Read(/home/clayly/projects/zva-no-project/elite-engineers_advent-of-ai_2025_02/**)",
+      "Edit(/home/clayly/projects/zva-no-project/elite-engineers_advent-of-ai_2025_02/**)"
+    ]
+  },
+  "memoryImport": {},
+  "monitoring": {}
+}
