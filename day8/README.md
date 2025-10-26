@@ -10,6 +10,7 @@ A simple console-based AI chat application using LangChain with z.ai's GLM API.
 - Environment-based configuration
 - Error handling and user-friendly messages
 - **Token usage tracking** - Displays input/output token counts for each response
+- **Automatic conversation summarization** - Handles long conversations without token overflow
 
 ## Requirements
 
@@ -88,6 +89,17 @@ The application uses LangChain to interface with z.ai's GLM API:
 3. **Rich Display**: Uses Rich library for enhanced terminal output
 4. **Environment Config**: Loads settings from .env file
 5. **Token Tracking**: Uses LangChain's callback system to track token usage
+6. **Automatic Summarization**: Uses LangChain's SummarizationMiddleware to handle long conversations
+
+### Automatic Conversation Summarization
+
+The application implements LangChain's latest SummarizationMiddleware to automatically handle long conversations:
+
+- When the conversation approaches the token limit (4000 tokens by default), the middleware automatically summarizes older messages
+- The last 10 messages are preserved in their original form
+- Older messages are replaced with a concise summary
+- This process is transparent to the user experience
+- Prevents token overflow errors while maintaining conversation context
 
 ## Extending the Application
 

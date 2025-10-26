@@ -13,6 +13,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.callbacks import StreamingStdOutCallbackHandler
 from langchain_community.callbacks import get_openai_callback
+from langchain.agents import create_agent
+from langchain.agents.middleware import SummarizationMiddleware
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -54,22 +56,6 @@ def get_user_input() -> str:
     except EOFError:
         return "exit"
 
-def process_message(llm, messages: List) -> tuple[str, dict]:
-    """Process user message and get AI response with token usage"""
-    try:
-        with get_openai_callback() as cb:
-            response = llm.invoke(messages)
-            token_usage = {
-                "total_tokens": cb.total_tokens,
-                "prompt_tokens": cb.prompt_tokens,
-                "completion_tokens": cb.completion_tokens,
-                "total_cost": cb.total_cost
-            }
-        return response.content, token_usage
-    except Exception as e:
-        console.print(f"[bold red]Error:[/bold red] {str(e)}")
-        return "Sorry, I encountered an error processing your request.", {}
-
 def display_ai_response(response: str, token_usage: dict = None):
     """Display AI response with rich formatting and token usage"""
     console.print("[bold blue]AI Assistant:[/bold blue]")
@@ -100,7 +86,20 @@ def main():
     display_welcome()
     llm = initialize_llm()
     
-    # Initialize conversation history
+    # Create agent with SummarizationMiddleware to handle long conversations
+    agent = create_agent(
+        model=llm,
+        tools=[],  # No tools needed for simple chat
+        middleware=[
+            SummarizationMiddleware(
+                model=llm,  # Use the same model for summarization
+                max_tokens_before_summary=100,  # Trigger summarization at 4000 tokens
+                messages_to_keep=10,  # Keep last 10 messages after summary
+            ),
+        ],
+    )
+    
+    # Initialize conversation history with system message
     messages = [SystemMessage(content=SYSTEM_MESSAGE)]
     
     # Main chat loop
@@ -115,14 +114,29 @@ def main():
         # Add user message to history
         messages.append(HumanMessage(content=user_input))
         
-        # Get and display AI response
-        with console.status("[bold blue]Thinking...", spinner="dots"):
-            ai_response, token_usage = process_message(llm, messages)
-        
-        display_ai_response(ai_response, token_usage)
-        
-        # Add AI response to history
-        messages.append(AIMessage(content=ai_response))
+        # Get and display AI response using the agent
+        try:
+            with console.status("[bold blue]Thinking...", spinner="dots"):
+                with get_openai_callback() as cb:
+                    response = agent.invoke({"messages": messages})
+                    token_usage = {
+                        "total_tokens": cb.total_tokens,
+                        "prompt_tokens": cb.prompt_tokens,
+                        "completion_tokens": cb.completion_tokens,
+                        "total_cost": cb.total_cost
+                    }
+            
+            # Extract AI response content
+            ai_response = response["messages"][-1].content
+            display_ai_response(ai_response, token_usage)
+            
+            # Add AI response to history
+            messages.append(AIMessage(content=ai_response))
+            
+        except Exception as e:
+            console.print(f"[bold red]Error:[/bold red] {str(e)}")
+            console.print("[dim]The conversation will continue, but the last message may not be saved.[/dim]")
+            console.print("")
 
 if __name__ == "__main__":
     main()
