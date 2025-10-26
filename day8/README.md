@@ -9,6 +9,7 @@ A simple console-based AI chat application using LangChain with z.ai's GLM API.
 - Rich text formatting with Markdown support
 - Environment-based configuration
 - Error handling and user-friendly messages
+- **Token usage tracking** - Displays input/output token counts for each response
 
 ## Requirements
 
@@ -30,6 +31,7 @@ uv pip install -e .
 This will create a virtual environment and install all required dependencies including:
 - LangChain
 - LangChain-OpenAI
+- LangChain-Community
 - Rich for terminal formatting
 - python-dotenv for configuration
 
@@ -62,6 +64,11 @@ cd day8
 
 The application will start and prompt you for input. Type your messages and press Enter to send them to the AI. Type 'exit' or 'quit' to end the conversation.
 
+For each response, the application will display token usage information:
+- Prompt tokens: Number of tokens in the input (including conversation history)
+- Completion tokens: Number of tokens in the AI's response
+- Total tokens: Sum of prompt and completion tokens
+
 ## Project Structure
 
 ```
@@ -80,6 +87,7 @@ The application uses LangChain to interface with z.ai's GLM API:
 2. **Conversation Memory**: Maintains conversation history for context
 3. **Rich Display**: Uses Rich library for enhanced terminal output
 4. **Environment Config**: Loads settings from .env file
+5. **Token Tracking**: Uses LangChain's callback system to track token usage
 
 ## Extending the Application
 

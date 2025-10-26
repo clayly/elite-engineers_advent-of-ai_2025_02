@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.callbacks import StreamingStdOutCallbackHandler
+from langchain_community.callbacks import get_openai_callback
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -53,17 +54,24 @@ def get_user_input() -> str:
     except EOFError:
         return "exit"
 
-def process_message(llm, messages: List) -> str:
-    """Process user message and get AI response"""
+def process_message(llm, messages: List) -> tuple[str, dict]:
+    """Process user message and get AI response with token usage"""
     try:
-        response = llm.invoke(messages)
-        return response.content
+        with get_openai_callback() as cb:
+            response = llm.invoke(messages)
+            token_usage = {
+                "total_tokens": cb.total_tokens,
+                "prompt_tokens": cb.prompt_tokens,
+                "completion_tokens": cb.completion_tokens,
+                "total_cost": cb.total_cost
+            }
+        return response.content, token_usage
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {str(e)}")
-        return "Sorry, I encountered an error processing your request."
+        return "Sorry, I encountered an error processing your request.", {}
 
-def display_ai_response(response: str):
-    """Display AI response with rich formatting"""
+def display_ai_response(response: str, token_usage: dict = None):
+    """Display AI response with rich formatting and token usage"""
     console.print("[bold blue]AI Assistant:[/bold blue]")
     # Try to parse as markdown, fallback to plain text
     try:
@@ -71,6 +79,13 @@ def display_ai_response(response: str):
         console.print(md)
     except:
         console.print(response)
+    
+    # Display token usage if available
+    if token_usage and token_usage.get("total_tokens", 0) > 0:
+        console.print(f"[dim]Tokens: {token_usage['prompt_tokens']} prompt, "
+                     f"{token_usage['completion_tokens']} completion, "
+                     f"{token_usage['total_tokens']} total[/dim]")
+    
     console.print("")
 
 def main():
@@ -102,9 +117,9 @@ def main():
         
         # Get and display AI response
         with console.status("[bold blue]Thinking...", spinner="dots"):
-            ai_response = process_message(llm, messages)
+            ai_response, token_usage = process_message(llm, messages)
         
-        display_ai_response(ai_response)
+        display_ai_response(ai_response, token_usage)
         
         # Add AI response to history
         messages.append(AIMessage(content=ai_response))
