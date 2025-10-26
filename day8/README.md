@@ -100,6 +100,7 @@ The application implements LangChain's latest SummarizationMiddleware to automat
 - Older messages are replaced with a concise summary
 - This process is transparent to the user experience
 - Prevents token overflow errors while maintaining conversation context
+- Displays a notification when summarization occurs, showing the summarized content
 
 ## Extending the Application
 

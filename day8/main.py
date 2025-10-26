@@ -74,6 +74,23 @@ def display_ai_response(response: str, token_usage: dict = None):
     
     console.print("")
 
+def detect_and_display_summarization(original_messages: list, response_messages: list):
+    """Detect when summarization occurs and display the summarized content"""
+    # Check if the number of messages has decreased significantly
+    if len(response_messages) < len(original_messages) and len(original_messages) > 3:
+        # Look for messages that contain summary content
+        for msg in response_messages:
+            if hasattr(msg, 'content') and isinstance(msg.content, str):
+                # Check if this looks like a summary message
+                if 'summary' in msg.content.lower() or 'previous conversation' in msg.content.lower():
+                    console.print("[bold yellow]📝 Conversation summarized to manage token usage:[/bold yellow]")
+                    # Try to display just the summary part
+                    summary_content = msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
+                    console.print(f"[dim]{summary_content}[/dim]")
+                    console.print(f"[dim]Original messages: {len(original_messages)} → After summarization: {len(response_messages)}[/dim]")
+                    console.print("")
+                    break
+
 def main():
     """Main chat loop"""
     # Check for API key
@@ -93,7 +110,7 @@ def main():
         middleware=[
             SummarizationMiddleware(
                 model=llm,  # Use the same model for summarization
-                max_tokens_before_summary=100,  # Trigger summarization at 4000 tokens
+                max_tokens_before_summary=200,  # Trigger summarization at 4000 tokens
                 messages_to_keep=10,  # Keep last 10 messages after summary
             ),
         ],
@@ -128,6 +145,11 @@ def main():
             
             # Extract AI response content
             ai_response = response["messages"][-1].content
+            
+            # Detect and display summarization info
+            detect_and_display_summarization(messages, response["messages"])
+            
+            # Display AI response
             display_ai_response(ai_response, token_usage)
             
             # Add AI response to history
