@@ -4,7 +4,7 @@ Simple MCP Server using FastMCP 2.0
 Day 8 implementation for Elite Engineers Advent of AI 2025
 """
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 import json
 import asyncio
 import urllib.parse

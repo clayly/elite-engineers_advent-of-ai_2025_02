@@ -18,7 +18,7 @@
       "command": "uv",
       "args": [
         "run",
-        "mcp.py"
+        "z_mcp.py"
       ],
       "type": "stdio"
     }
