@@ -7,6 +7,7 @@ Day 8 implementation for Elite Engineers Advent of AI 2025
 from fastmcp import FastMCP
 import json
 import asyncio
+import urllib.request
 import urllib.parse
 from datetime import datetime
 
@@ -27,7 +28,6 @@ async def fetch_weather(latitude: float = 52.52, longitude: float = 13.41) -> di
     url = f"{base_url}?{urllib.parse.urlencode(params)}"
 
     try:
-        import urllib.request
         with urllib.request.urlopen(url) as response:
             data = json.loads(response.read().decode())
             return data
@@ -49,6 +49,4 @@ async def z_weather(latitude: float = 52.52, longitude: float = 13.41) -> str:
 
 
 if __name__ == "__main__":
-    print("Starting Weather MCP Server...")
     mcp.run()
-    print("MCP Server finished.")
