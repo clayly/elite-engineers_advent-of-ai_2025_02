@@ -13,6 +13,14 @@
         "mcp-server-fetch"
       ],
       "type": "stdio"
+    },
+    "weather": {
+      "command": "uv",
+      "args": [
+        "run",
+        "mcp.py"
+      ],
+      "type": "stdio"
     }
   }
 }
