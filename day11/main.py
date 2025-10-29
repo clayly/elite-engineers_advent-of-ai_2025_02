@@ -29,6 +29,7 @@ from rich.prompt import Prompt
 
 # MCP imports
 from langchain_mcp_adapters.client import MultiServerMCPClient
+import telegram
 
 # Load environment variables
 load_dotenv()
@@ -442,6 +443,22 @@ def load_periodic_task() -> Optional[Dict[str, str]]:
 def parse_scheduled_time(time_str: str) -> time:
     return datetime.strptime(time_str, "%H:%M").time()
 
+async def send_to_telegram(message: str):
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    
+    if not bot_token or not chat_id:
+        console.print("[yellow]⚠[/yellow] Telegram credentials not found in environment variables")
+        return
+    
+    try:
+        bot = telegram.Bot(bot_token)
+        async with bot:
+            await bot.send_message(text=message, chat_id=chat_id)
+        console.print("[green]✓[/green] Message sent to Telegram successfully")
+    except Exception as e:
+        console.print(f"[red]✗[/red] Failed to send message to Telegram: {e}")
+
 async def execute_periodic_task(agent, messages: List, task_config: Dict[str, str]):
     console.print(f"\n[bold yellow]⏰ Executing scheduled task at {task_config['scheduled_time']}[/bold yellow]")
     
@@ -461,6 +478,8 @@ async def execute_periodic_task(agent, messages: List, task_config: Dict[str, st
         
         ai_response = response["messages"][-1].content
         display_ai_response(ai_response, token_usage)
+        
+        await send_to_telegram(ai_response)
         
     except Exception as e:
         console.print(f"[bold red]Error executing periodic task:[/bold red] {str(e)}")
