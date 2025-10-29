@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "day8-ai-chat"
+version = "0.1.0"
+description = "Simple AI chat application using LangChain with z.ai GLM API"
+authors = [
+    {name = "Elite Engineers", email = "team@elite-engineers.com"}
+]
+dependencies = [
+    "langchain>=1.0.1",
+    "langchain-openai>=1.0.0",
+    "langchain-core>=1.0.0",
+    "langchain-community>=0.4.0",
+    "python-dotenv>=1.0.1",
+    "rich>=13.9.4",
+    "langchain-mcp-adapters>=0.1.9",
+    "fastmcp>=2.13.0.2",
+]
+requires-python = ">=3.11"
+readme = "README.md"
+license = {text = "MIT"}
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.4",
+    "black>=24.10.0",
+    "ruff>=0.8.6",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
