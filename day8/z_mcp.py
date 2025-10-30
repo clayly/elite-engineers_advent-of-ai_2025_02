@@ -4,11 +4,14 @@ Simple MCP Server using FastMCP 2.0
 Day 8 implementation for Elite Engineers Advent of AI 2025
 """
 
-from fastmcp import FastMCP
+import random
+import string as string_module
 import json
 import asyncio
 import urllib.request
 import urllib.parse
+
+from fastmcp import FastMCP
 from datetime import datetime
 
 # Create an MCP server instance
@@ -47,6 +50,39 @@ async def z_weather(latitude: float = 52.52, longitude: float = 13.41) -> str:
     weather_data = await fetch_weather(latitude, longitude)
     return json.dumps(weather_data, indent=2)
 
+
+@mcp.tool()
+async def z_string_length(string: str) -> str:
+    """
+    Calculate string length
+
+    Args:
+        string: string to calculate length of
+    """
+    length = len(string)
+    return json.dumps({"length": length})
+
+@mcp.tool()
+async def z_string_random(length: int) -> str:
+    """
+    Generate random string of specified length
+
+    Args:
+        length: length of generated string
+    """
+    string = ''.join(random.choices(string_module.ascii_uppercase + string_module.digits, k=length))
+    return json.dumps({"string": string})
+
+@mcp.tool()
+async def z_number_is_even(number: int) -> str:
+    """
+    Check if number is even
+
+    Args:
+        number: number to check oddity of
+    """
+    isEven = number % 2 == 0
+    return json.dumps({"isEven": isEven})
 
 if __name__ == "__main__":
     mcp.run()
