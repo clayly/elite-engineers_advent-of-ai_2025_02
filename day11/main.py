@@ -343,30 +343,26 @@ def detect_and_display_summarization(original_messages: list, response_messages:
                     break
 
 async def main():
-    """Main chat loop"""
-    # Check for API key
+    """Main scheduled task runner"""
     if not os.getenv("OPENAI_API_KEY"):
         console.print("[bold red]Error:[/bold red] OPENAI_API_KEY not found in environment variables")
         console.print("Please set your API key in a .env file")
         sys.exit(1)
 
-    # Initialize components
-    display_welcome()
+    console.print("[bold blue]AI Scheduled Task Runner[/bold blue]")
     llm = initialize_llm()
 
-    # Load MCP tools
     console.print("[bold blue]Loading MCP tools...[/bold blue]")
     mcp_tools = await load_mcp_tools()
 
-    # Create agent with MCP tools and SummarizationMiddleware to handle long conversations
     agent = create_agent(
         model=llm,
-        tools=mcp_tools,  # Include MCP tools
+        tools=mcp_tools,
         middleware=[
             SummarizationMiddleware(
-                model=llm,  # Use the same model for summarization
-                max_tokens_before_summary=200,  # Trigger summarization at 4000 tokens
-                messages_to_keep=10,  # Keep last 10 messages after summary
+                model=llm,
+                max_tokens_before_summary=200,
+                messages_to_keep=10,
             ),
         ],
     )
@@ -376,59 +372,19 @@ async def main():
     else:
         console.print("[yellow]⚠[/yellow] Agent initialized without MCP tools")
     
+    messages = [SystemMessage(content=SYSTEM_MESSAGE)]
+    
     periodic_task = load_periodic_task()
     if periodic_task and periodic_task.get('scheduled_time'):
         schedule_daily_task(agent, messages, periodic_task)
-    
-    # Initialize conversation history with system message
-    messages = [SystemMessage(content=SYSTEM_MESSAGE)]
-    
-    # Main chat loop
-    while True:
-        user_input = get_user_input()
-
-        # Check for exit commands
-        if user_input.lower() in ['exit', 'quit']:
-            console.print("[bold yellow]Goodbye![/bold yellow]")
-            break
-
-        # Handle MCP commands
-        if user_input.startswith('/mcp'):
-            if handle_mcp_command(user_input):
-                continue  # Command handled, continue to next iteration
-
-        # Add user message to history
-        messages.append(HumanMessage(content=user_input))
-        
-        # Get and display AI response using the agent
+        console.print("[green]Scheduler running. Press Ctrl+C to stop.[/green]")
         try:
-            with console.status("[bold blue]Thinking...", spinner="dots"):
-                with get_openai_callback() as cb:
-                    # Try using async invoke with middleware
-                    response = await agent.ainvoke({"messages": messages})
-                    token_usage = {
-                        "total_tokens": cb.total_tokens,
-                        "prompt_tokens": cb.prompt_tokens,
-                        "completion_tokens": cb.completion_tokens,
-                        "total_cost": cb.total_cost
-                    }
-            
-            # Extract AI response content
-            ai_response = response["messages"][-1].content
-            
-            # Detect and display summarization info
-            detect_and_display_summarization(messages, response["messages"])
-            
-            # Display AI response
-            display_ai_response(ai_response, token_usage)
-            
-            # Add AI response to history
-            messages.append(AIMessage(content=ai_response))
-            
-        except Exception as e:
-            console.print(f"[bold red]Error:[/bold red] {str(e)}")
-            console.print("[dim]The conversation will continue, but the last message may not be saved.[/dim]")
-            console.print("")
+            while True:
+                await asyncio.sleep(60)
+        except KeyboardInterrupt:
+            console.print("\n[bold yellow]Shutting down...[/bold yellow]")
+    else:
+        console.print("[red]✗[/red] No periodic task configured")
 
 def load_periodic_task() -> Optional[Dict[str, str]]:
     try:
@@ -487,19 +443,18 @@ async def execute_periodic_task(agent, messages: List, task_config: Dict[str, st
 def schedule_daily_task(agent, messages: List, task_config: Dict[str, str]):
     target_time = parse_scheduled_time(task_config['scheduled_time'])
     
-    def run_scheduler():
+    async def run_scheduler():
         while True:
             now = datetime.now()
             current_time = now.time()
             
             if current_time.hour == target_time.hour and current_time.minute == target_time.minute:
-                asyncio.run(execute_periodic_task(agent, messages, task_config))
-                time_module.sleep(61)
+                await execute_periodic_task(agent, messages, task_config)
+                await asyncio.sleep(61)
             else:
-                time_module.sleep(30)
+                await asyncio.sleep(30)
     
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
+    asyncio.create_task(run_scheduler())
     console.print(f"[green]✓[/green] Periodic task scheduled for {task_config['scheduled_time']} daily")
 
 if __name__ == "__main__":
