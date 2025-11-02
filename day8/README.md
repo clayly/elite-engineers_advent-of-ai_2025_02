@@ -155,6 +155,10 @@ This is a foundation that can be extended with:
 - Streaming responses
 - Database integration for persistent history
 
-## License
+## Dockerfile prompt
 
-MIT License
+```text
+Write fully self-contained Dockerfile with Python "hello-world" code -- all python code should be written inside Dockerfile. Add CMD clause, which will execute this code on "docker run". use write_file tool to write this Dockerfile with random name to directory /home/clayly/projects/zva-no-project/elite-engineers_advent-of-ai_2025_02/day8/sandbox/
+
+use z_docker_run to build and run this Dockerfile
+```
