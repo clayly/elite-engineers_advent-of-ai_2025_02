@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.callbacks import StreamingStdOutCallbackHandler
 from langchain_community.callbacks import get_openai_callback
 from langchain.agents import create_agent
-from langchain.agents.middleware import SummarizationMiddleware
+from langchain.agents.middleware import SummarizationMiddleware, ModelCallLimitMiddleware
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -353,15 +353,20 @@ async def main():
     console.print("[bold blue]Loading MCP tools...[/bold blue]")
     mcp_tools = await load_mcp_tools()
 
-    # Create agent with MCP tools and SummarizationMiddleware to handle long conversations
+    # Create agent with MCP tools and middleware for large project analysis
     agent = create_agent(
         model=llm,
         tools=mcp_tools,  # Include MCP tools
         middleware=[
+            ModelCallLimitMiddleware(
+                run_limit=100,  # Allow up to 100 model calls per run for large analysis
+                thread_limit=200,  # Allow up to 200 calls per thread
+                exit_behavior="end",  # Gracefully end when limit reached
+            ),
             SummarizationMiddleware(
                 model=llm,  # Use the same model for summarization
-                max_tokens_before_summary=200,  # Trigger summarization at 4000 tokens
-                messages_to_keep=10,  # Keep last 10 messages after summary
+                max_tokens_before_summary=8000,  # Higher token limit for large project context
+                messages_to_keep=20,  # Keep more messages for complex analysis
             ),
         ],
     )
@@ -395,8 +400,12 @@ async def main():
         try:
             with console.status("[bold blue]Thinking...", spinner="dots"):
                 with get_openai_callback() as cb:
-                    # Try using async invoke with middleware
-                    response = await agent.ainvoke({"messages": messages})
+                    # Try using async invoke with middleware and increased recursion limit for large project analysis
+                    response = await agent.ainvoke({
+                        "messages": messages
+                    }, config={
+                        "recursion_limit": 200  # Much higher limit for large project analysis
+                    })
                     token_usage = {
                         "total_tokens": cb.total_tokens,
                         "prompt_tokens": cb.prompt_tokens,
