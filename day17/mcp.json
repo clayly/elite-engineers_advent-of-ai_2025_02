@@ -1,0 +1,57 @@
+{
+  "mcpServers": {
+    "git": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-git"
+      ],
+      "type": "stdio"
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-fetch"
+      ],
+      "type": "stdio"
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/clayly/projects/zva-no-project/elite-engineers_advent-of-ai_2025_02/day8/sandbox/"
+      ]
+    },
+    "z_mcp": {
+      "command": "uv",
+      "args": [
+        "run",
+        "z_mcp.py"
+      ],
+      "type": "stdio"
+    },
+        "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ]
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ]
+    },
+    "serena": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/oraios/serena",
+        "serena",
+        "start-mcp-server"
+      ]
+    }
+  }
+}
