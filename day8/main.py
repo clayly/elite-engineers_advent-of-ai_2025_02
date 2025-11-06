@@ -27,6 +27,11 @@ from rich.prompt import Prompt
 # MCP imports
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+# Memory and persistence imports
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.store.memory import InMemoryStore
+from langchain_core.runnables import RunnableConfig
+
 # Load environment variables
 load_dotenv()
 
@@ -41,7 +46,11 @@ Use these tools when they are relevant to the user's request.
 Be concise but helpful in your responses."""
 
 # MCP configuration file path
+# MCP configuration file path
 MCP_CONFIG_PATH = Path(__file__).parent / "mcp.json"
+
+# Memory database path
+MEMORY_DB_PATH = Path(__file__).parent / "chat_memory.db"
 
 class MCPServerManager:
     """Manages MCP server registration and lifecycle"""
@@ -156,6 +165,100 @@ class MCPServerManager:
 # Global MCP server manager
 mcp_manager = MCPServerManager()
 
+class SimpleMemoryManager:
+    """Simple file-based persistent memory for AI conversations"""
+
+    def __init__(self, db_path: Path = MEMORY_DB_PATH):
+        self.db_path = db_path
+        self.sessions_dir = db_path.parent / "sessions"
+        self.sessions_dir.mkdir(exist_ok=True)
+        self.store = InMemoryStore()
+        console.print(f"[green]✓[/green] Memory directory initialized: {self.sessions_dir}")
+        console.print("[green]✓[/green] Semantic memory store initialized")
+
+    def _get_session_file(self, thread_id: str) -> Path:
+        """Get the file path for a session's conversation history"""
+        return self.sessions_dir / f"{thread_id}.json"
+
+    def get_agent_config(self, thread_id: str = "default", user_id: str = "default_user") -> RunnableConfig:
+        """Get configuration for agent with thread and user IDs"""
+        return {
+            "configurable": {
+                "thread_id": thread_id,
+                "user_id": user_id
+            }
+        }
+
+    def get_conversation_history(self, thread_id: str = "default") -> list:
+        """Retrieve conversation history for a specific thread"""
+        try:
+            session_file = self._get_session_file(thread_id)
+            if session_file.exists():
+                with open(session_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # Convert stored messages back to LangChain message objects
+                    messages = []
+                    for msg_data in data.get("messages", []):
+                        if msg_data["type"] == "human":
+                            messages.append(HumanMessage(content=msg_data["content"]))
+                        elif msg_data["type"] == "ai":
+                            messages.append(AIMessage(content=msg_data["content"]))
+                        elif msg_data["type"] == "system":
+                            messages.append(SystemMessage(content=msg_data["content"]))
+                    return messages
+            return []
+        except Exception as e:
+            console.print(f"[red]✗[/red] Failed to retrieve conversation history: {e}")
+            return []
+
+    def save_conversation(self, thread_id: str, messages: list):
+        """Save conversation history to file"""
+        try:
+            session_file = self._get_session_file(thread_id)
+            # Convert LangChain messages to serializable format
+            serializable_messages = []
+            for msg in messages:
+                msg_type = "unknown"
+                if hasattr(msg, 'type'):
+                    msg_type = msg.type
+                elif isinstance(msg, HumanMessage):
+                    msg_type = "human"
+                elif isinstance(msg, AIMessage):
+                    msg_type = "ai"
+                elif isinstance(msg, SystemMessage):
+                    msg_type = "system"
+
+                serializable_messages.append({
+                    "type": msg_type,
+                    "content": msg.content
+                })
+
+            data = {
+                "thread_id": thread_id,
+                "messages": serializable_messages,
+                "updated_at": str(Path().absolute())
+            }
+
+            with open(session_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            console.print(f"[red]✗[/red] Failed to save conversation: {e}")
+
+    def list_threads(self) -> list:
+        """List all available conversation threads"""
+        try:
+            threads = []
+            for session_file in self.sessions_dir.glob("*.json"):
+                thread_id = session_file.stem
+                threads.append(thread_id)
+            return threads if threads else ["default"]
+        except Exception as e:
+            console.print(f"[red]✗[/red] Failed to list threads: {e}")
+            return ["default"]
+
+# Global memory manager
+memory_manager = SimpleMemoryManager()
+
 async def load_mcp_tools() -> List[Any]:
     """Load all available MCP tools from enabled servers"""
     enabled_servers = mcp_manager.get_enabled_servers()
@@ -210,9 +313,27 @@ def initialize_llm():
         streaming=False  # Set to True for streaming output
     )
 
+def display_session_info():
+    """Display session and memory information"""
+    console.print("\n[bold]Memory & Session Info:[/bold]")
+    console.print(f"  • Memory directory: {memory_manager.sessions_dir}")
+    console.print(f"  • Persistence: [green]Enabled[/green]")
+
+    # Show conversation history count
+    history = memory_manager.get_conversation_history(current_thread_id)
+    if history:
+        console.print(f"  • Previous messages: {len(history)}")
+    else:
+        console.print("  • Previous messages: None (new conversation)")
+
 def display_welcome():
     """Display welcome message"""
     console.print(Panel.fit("[bold blue]AI Chat with LangChain + MCP Support[/bold blue]", border_style="blue"))
+    console.print("Welcome to the AI chat application with Model Context Protocol support!")
+    console.print("This application integrates MCP tools and now includes **persistent memory** - your conversations are saved and restored after restart.")
+    
+    # Display session and memory info
+    display_session_info()
     console.print("Welcome to the AI chat application with Model Context Protocol support!")
     console.print("This application integrates MCP tools to provide enhanced capabilities like file operations, git commands, and more.")
 
@@ -233,11 +354,83 @@ def display_welcome():
     console.print("  Type '/mcp enable <name>' to enable an MCP server")
     console.print("  Type '/mcp disable <name>' to disable an MCP server")
     console.print("  Type '/mcp unregister <name>' to remove an MCP server")
+    console.print("  • '/session list' - List all conversation sessions")
+    console.print("  • '/session new <name>' - Start a new conversation session")
+    console.print("  • '/session switch <name>' - Switch to an existing session")
+    console.print("  • '/session info' - Show current session information")
+    
     console.print("\n[dim]Example questions you can ask:[/dim]")
     console.print("  • 'What files are in the current directory?'")
     console.print("  • 'Show me the git status of this repository'")
     console.print("  • 'Create a file called hello.txt with some content'")
     console.print("")
+
+# Global session state
+current_thread_id = "default"
+current_user_id = "default_user"
+
+def handle_session_command(command: str) -> bool:
+    """Handle session-related commands. Returns True if command was handled."""
+    global current_thread_id
+    parts = command.strip().split()
+    if len(parts) < 2 or parts[0] != "/session":
+        return False
+
+    subcommand = parts[1]
+
+    if subcommand == "list":
+        console.print("\n[bold]Available Sessions:[/bold]")
+        threads = memory_manager.list_threads()
+        for thread in threads:
+            status = "✓ [green]Current[/green]" if thread == current_thread_id else f"• {thread}"
+            console.print(f"  {status}")
+        console.print()
+        return True
+
+    elif subcommand == "new":
+        if len(parts) < 3:
+            console.print("[red]Usage: /session new <session_name>[/red]")
+            return True
+        session_name = parts[2]
+        current_thread_id = session_name
+        console.print(f"[green]✓[/green] Started new session: {session_name}")
+        console.print("[dim]Tip: Use '/session list' to see all sessions[/dim]")
+        return True
+
+    elif subcommand == "switch":
+        if len(parts) < 3:
+            console.print("[red]Usage: /session switch <session_name>[/red]")
+            return True
+        session_name = parts[2]
+        current_thread_id = session_name
+        console.print(f"[green]✓[/green] Switched to session: {session_name}")
+        
+        # Show conversation history for this session
+        history = memory_manager.get_conversation_history(session_name)
+        if history:
+            console.print(f"[dim]Found {len(history)} previous messages in this session[/dim]")
+        else:
+            console.print("[dim]No previous messages in this session[/dim]")
+        console.print()
+        return True
+
+    elif subcommand == "info":
+        console.print(f"\n[bold]Current Session Info:[/bold]")
+        console.print(f"  • Session ID: {current_thread_id}")
+        console.print(f"  • User ID: {current_user_id}")
+        
+        history = memory_manager.get_conversation_history(current_thread_id)
+        console.print(f"  • Messages in session: {len(history)}")
+        
+        if history:
+            console.print(f"  • Last message: {history[-1].content[:50]}{'...' if len(history[-1].content) > 50 else ''}")
+        console.print()
+        return True
+
+    else:
+        console.print(f"[red]Unknown session subcommand: {subcommand}[/red]")
+        console.print("[dim]Available subcommands: list, new, switch, info[/dim]")
+        return True
 
 def handle_mcp_command(command: str) -> bool:
     """Handle MCP-related commands. Returns True if command was handled."""
@@ -353,7 +546,7 @@ async def main():
     console.print("[bold blue]Loading MCP tools...[/bold blue]")
     mcp_tools = await load_mcp_tools()
 
-    # Create agent with MCP tools and middleware for large project analysis
+    # Create agent with MCP tools, middleware, and persistent memory
     agent = create_agent(
         model=llm,
         tools=mcp_tools,  # Include MCP tools
@@ -369,6 +562,7 @@ async def main():
                 messages_to_keep=20,  # Keep more messages for complex analysis
             ),
         ],
+        store=memory_manager.store,  # Add semantic memory store
     )
 
     if mcp_tools:
@@ -376,8 +570,19 @@ async def main():
     else:
         console.print("[yellow]⚠[/yellow] Agent initialized without MCP tools")
     
-    # Initialize conversation history with system message
-    messages = [SystemMessage(content=SYSTEM_MESSAGE)]
+    # Initialize conversation with persistent memory
+    config = memory_manager.get_agent_config(current_thread_id, current_user_id)
+    
+    # Try to load existing conversation history
+    messages = memory_manager.get_conversation_history(current_thread_id)
+    if messages:
+        console.print(f"[green]✓[/green] Restored {len(messages)} previous messages")
+        console.print("[dim]Type '/session info' for more details about this session[/dim]")
+    else:
+        # Start new conversation with system message
+        messages = [SystemMessage(content=SYSTEM_MESSAGE)]
+        console.print("[dim]Starting new conversation[/dim]")
+        console.print("[dim]Tip: Your conversations are now automatically saved![/dim]")
     
     # Main chat loop
     while True:
@@ -393,19 +598,36 @@ async def main():
             if handle_mcp_command(user_input):
                 continue  # Command handled, continue to next iteration
 
-        # Add user message to history
-        messages.append(HumanMessage(content=user_input))
+        # Handle session commands
+        if user_input.startswith('/session'):
+            if handle_session_command(user_input):
+                # Update config for new session
+                config = memory_manager.get_agent_config(current_thread_id, current_user_id)
+                # Load conversation history for the new session
+                messages = memory_manager.get_conversation_history(current_thread_id)
+                if not messages:
+                    messages = [SystemMessage(content=SYSTEM_MESSAGE)]
+                continue  # Command handled, continue to next iteration
+
+        # User message will be added to persistent memory automatically through the agent
+        # We just need to pass the current user input
         
         # Get and display AI response using the agent
         try:
             with console.status("[bold blue]Thinking...", spinner="dots"):
                 with get_openai_callback() as cb:
                     # Try using async invoke with middleware and increased recursion limit for large project analysis
+                    # Update config with current session info and invoke with persistent memory
+                    config = memory_manager.get_agent_config(current_thread_id, current_user_id)
+                    config["recursion_limit"] = 200  # Much higher limit for large project analysis
+                    
+                    # Add user message to conversation
+                    messages.append(HumanMessage(content=user_input))
+
+                    # Pass the entire conversation history to the agent
                     response = await agent.ainvoke({
                         "messages": messages
-                    }, config={
-                        "recursion_limit": 200  # Much higher limit for large project analysis
-                    })
+                    }, config=config)
                     token_usage = {
                         "total_tokens": cb.total_tokens,
                         "prompt_tokens": cb.prompt_tokens,
@@ -422,8 +644,10 @@ async def main():
             # Display AI response
             display_ai_response(ai_response, token_usage)
             
-            # Add AI response to history
+            # Add AI response to messages and save to file
             messages.append(AIMessage(content=ai_response))
+            memory_manager.save_conversation(current_thread_id, messages)
+            console.print("[dim]✓ Conversation saved to persistent memory[/dim]")
             
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {str(e)}")

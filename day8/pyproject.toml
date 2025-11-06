@@ -10,6 +10,7 @@ authors = [
     {name = "Elite Engineers", email = "team@elite-engineers.com"}
 ]
 dependencies = [
+    "langgraph-checkpoint-sqlite>=3.0.0",
     "langchain>=1.0.1",
     "langchain-openai>=1.0.0",
     "langchain-core>=1.0.0",
