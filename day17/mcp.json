@@ -30,7 +30,7 @@
       ],
       "type": "stdio"
     },
-        "context7": {
+    "context7": {
       "command": "npx",
       "args": [
         "-y",
