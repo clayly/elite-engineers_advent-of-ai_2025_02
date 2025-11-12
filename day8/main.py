@@ -17,8 +17,17 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.callbacks import StreamingStdOutCallbackHandler
 from langchain_community.callbacks import get_openai_callback
+from langchain_core.runnables import RunnableLambda
 from langchain.agents import create_agent
 from langchain.agents.middleware import SummarizationMiddleware, ModelCallLimitMiddleware
+
+# RAG imports
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+
+# Local RAG imports
+from rag_manager import RAGManager, should_use_rag, format_docs
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -259,6 +268,9 @@ class SimpleMemoryManager:
 # Global memory manager
 memory_manager = SimpleMemoryManager()
 
+# Global RAG manager
+rag_manager = RAGManager()
+
 async def load_mcp_tools() -> List[Any]:
     """Load all available MCP tools from enabled servers"""
     enabled_servers = mcp_manager.get_enabled_servers()
@@ -301,6 +313,49 @@ async def load_mcp_tools() -> List[Any]:
         console.print(f"[red]✗[/red] Failed to load MCP tools: {e}")
         console.print("[dim]This might be due to missing MCP server dependencies.[/dim]")
         return []
+
+def initialize_rag_chains(llm):
+    """Initialize RAG and non-RAG chains"""
+    
+    # RAG Prompt Template
+    rag_prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are a helpful AI assistant with access to relevant documents.
+Answer the question using ONLY the following context. If the context doesn't contain enough information, say so clearly.
+
+Context:
+{context}
+
+Previous conversation context and tools are also available to you. You can use MCP tools and your general knowledge when needed."""),
+        ("human", "{question}")
+    ])
+    
+    # Non-RAG Prompt Template (keep existing system message)
+    no_rag_prompt = ChatPromptTemplate.from_messages([
+        ("system", SYSTEM_MESSAGE),
+        ("human", "{question}")
+    ])
+    
+    # Create chains based on RAG availability
+    if rag_manager.get_retriever():
+        rag_chain = (
+            {"context": rag_manager.get_retriever() | RunnableLambda(format_docs), "question": RunnablePassthrough()}
+            | rag_prompt
+            | llm
+            | StrOutputParser()
+        )
+        console.print("[green]✓[/green] RAG chain initialized")
+    else:
+        rag_chain = None
+        console.print("[yellow]⚠[/yellow] RAG chain not available (no index)")
+    
+    no_rag_chain = (
+        {"question": RunnablePassthrough()}
+        | no_rag_prompt
+        | llm
+        | StrOutputParser()
+    )
+    
+    return rag_chain, no_rag_chain
 
 def initialize_llm():
     """Initialize the LLM with z.ai API configuration"""
@@ -358,6 +413,17 @@ def display_welcome():
     console.print("  • '/session new <name>' - Start a new conversation session")
     console.print("  • '/session switch <name>' - Switch to an existing session")
     console.print("  • '/session info' - Show current session information")
+    console.print("  • '/rag status' - Show RAG index status")
+    console.print("  • '/rag index <path>' - Index documents from file or directory")
+    console.print("  • '/rag search <query>' - Search documents in RAG index")
+    console.print("  • '/rag reset' - Reset RAG index")
+    
+    # Display RAG status
+    if rag_manager.ready:
+        stats = rag_manager.get_stats()
+        console.print(f"[green]✓[/green] RAG system ready: {stats.get('total_chunks', 0)} chunks indexed")
+    else:
+        console.print("[yellow]⚠[/yellow] RAG system not ready (use '/rag index <path>' to create index)")
     
     console.print("\n[dim]Example questions you can ask:[/dim]")
     console.print("  • 'What files are in the current directory?'")
@@ -430,6 +496,106 @@ def handle_session_command(command: str) -> bool:
     else:
         console.print(f"[red]Unknown session subcommand: {subcommand}[/red]")
         console.print("[dim]Available subcommands: list, new, switch, info[/dim]")
+        return True
+
+def handle_rag_command(command: str) -> bool:
+    """Handle RAG-related commands. Returns True if command was handled."""
+    parts = command.strip().split()
+    if len(parts) < 2 or parts[0] != "/rag":
+        return False
+    
+    subcommand = parts[1]
+    
+    if subcommand == "status":
+        stats = rag_manager.get_stats()
+        console.print("\n[bold]RAG System Status:[/bold]")
+        console.print(f"  • Status: {stats.get('status', 'unknown')}")
+        
+        if stats.get('status') == 'ready':
+            console.print(f"  • Total chunks: {stats.get('total_chunks', 0)}")
+            console.print(f"  • Index path: {stats.get('index_path', 'N/A')}")
+            
+            model_info = stats.get('model_info', {})
+            if model_info:
+                console.print(f"  • Model: {model_info.get('model_name', 'N/A')}")
+                console.print(f"  • Model type: {model_info.get('model_type', 'N/A')}")
+            
+            input_path = stats.get('input_path')
+            if input_path:
+                console.print(f"  • Source: {input_path}")
+        else:
+            console.print("  • RAG system not ready")
+            console.print("  • Use '/rag index <path>' to create index")
+        console.print()
+        return True
+    
+    elif subcommand == "index":
+        if len(parts) < 3:
+            console.print("[red]Usage: /rag index <file_or_directory_path>[/red]")
+            console.print("[dim]Example: /rag index ./documents[/dim]")
+            return True
+        
+        input_path = parts[2]
+        if not Path(input_path).exists():
+            console.print(f"[red]✗[/red] Path not found: {input_path}")
+            return True
+        
+        success = rag_manager.index_documents(input_path)
+        if success:
+            console.print("[green]✓[/green] Document indexing completed successfully!")
+        return True
+    
+    elif subcommand == "search":
+        if len(parts) < 3:
+            console.print("[red]Usage: /rag search <query>[/red]")
+            console.print("[dim]Example: /rag search artificial intelligence[/dim]")
+            return True
+        
+        query = " ".join(parts[2:])
+        results = rag_manager.search_documents(query, k=5)
+        
+        if not results:
+            console.print(f"[yellow]No results found for: {query}[/yellow]")
+            return True
+        
+        console.print(f"\n[bold]Search results for: {query}[/bold]")
+        console.print("=" * 80)
+        
+        for i, (doc, similarity) in enumerate(results, 1):
+            console.print(f"\nResult {i} (Similarity: {similarity:.4f})")
+            console.print("-" * 40)
+            
+            # Show metadata
+            metadata = doc.metadata
+            if metadata:
+                console.print("Metadata:")
+                for key, value in metadata.items():
+                    console.print(f"  {key}: {value}")
+            
+            # Show content preview
+            content_preview = doc.page_content[:300]
+            if len(doc.page_content) > 300:
+                content_preview += "..."
+            
+            console.print(f"\nContent preview:\n{content_preview}")
+            console.print("\n" + "=" * 80)
+        console.print()
+        return True
+    
+    elif subcommand == "reset":
+        console.print("[yellow]⚠[/yellow] This will remove the entire RAG index.")
+        confirm = input("Type 'yes' to confirm: ")
+        if confirm.lower() == 'yes':
+            success = rag_manager.reset_index()
+            if success:
+                console.print("[green]✓[/green] RAG index reset successfully")
+        else:
+            console.print("Operation cancelled")
+        return True
+    
+    else:
+        console.print(f"[red]Unknown RAG subcommand: {subcommand}[/red]")
+        console.print("[dim]Available subcommands: status, index, search, reset[/dim]")
         return True
 
 def handle_mcp_command(command: str) -> bool:
@@ -570,6 +736,10 @@ async def main():
     else:
         console.print("[yellow]⚠[/yellow] Agent initialized without MCP tools")
     
+    # Initialize RAG chains
+    console.print("[bold blue]Initializing RAG chains...[/bold blue]")
+    rag_chain, no_rag_chain = initialize_rag_chains(llm)
+    
     # Initialize conversation with persistent memory
     config = memory_manager.get_agent_config(current_thread_id, current_user_id)
     
@@ -609,44 +779,77 @@ async def main():
                     messages = [SystemMessage(content=SYSTEM_MESSAGE)]
                 continue  # Command handled, continue to next iteration
 
-        # User message will be added to persistent memory automatically through the agent
-        # We just need to pass the current user input
-        
-        # Get and display AI response using the agent
-        try:
-            with console.status("[bold blue]Thinking...", spinner="dots"):
-                with get_openai_callback() as cb:
-                    # Try using async invoke with middleware and increased recursion limit for large project analysis
-                    # Update config with current session info and invoke with persistent memory
-                    config = memory_manager.get_agent_config(current_thread_id, current_user_id)
-                    config["recursion_limit"] = 200  # Much higher limit for large project analysis
-                    
-                    # Add user message to conversation
-                    messages.append(HumanMessage(content=user_input))
+        # Handle RAG commands
+        if user_input.startswith('/rag'):
+            if handle_rag_command(user_input):
+                continue  # Command handled, continue to next iteration
 
-                    # Pass the entire conversation history to the agent
-                    response = await agent.ainvoke({
-                        "messages": messages
-                    }, config=config)
-                    token_usage = {
-                        "total_tokens": cb.total_tokens,
-                        "prompt_tokens": cb.prompt_tokens,
-                        "completion_tokens": cb.completion_tokens,
-                        "total_cost": cb.total_cost
-                    }
+        # Check for RAG trigger and process accordingly
+        use_rag, cleaned_question = should_use_rag(user_input)
+        
+        # Get and display AI response using RAG or agent
+        try:
+            if use_rag and rag_chain:
+                # Use RAG chain
+                with console.status("[bold blue]🔍 Searching documents...[/bold blue]", spinner="dots"):
+                    with get_openai_callback() as cb:
+                        ai_response = rag_chain.invoke(cleaned_question)
+                        token_usage = {
+                            "total_tokens": cb.total_tokens,
+                            "prompt_tokens": cb.prompt_tokens,
+                            "completion_tokens": cb.completion_tokens,
+                            "total_cost": cb.total_cost
+                        }
+                
+                # Add both original user input and RAG response to conversation
+                messages.append(HumanMessage(content=user_input))
+                messages.append(AIMessage(content=ai_response))
+                
+                # Display AI response
+                display_ai_response(ai_response, token_usage)
+                
+                # Save conversation with RAG context
+                memory_manager.save_conversation(current_thread_id, messages)
+                console.print("[dim]✓ RAG-enhanced conversation saved to persistent memory[/dim]")
+                
+            else:
+                # Use regular agent with tools
+                if use_rag and not rag_chain:
+                    console.print("[yellow]⚠[/yellow] RAG requested but no index available. Using agent mode.")
+                
+                with console.status("[bold blue]Thinking...[/bold blue]", spinner="dots"):
+                    with get_openai_callback() as cb:
+                        # Try using async invoke with middleware and increased recursion limit for large project analysis
+                        # Update config with current session info and invoke with persistent memory
+                        config = memory_manager.get_agent_config(current_thread_id, current_user_id)
+                        config["recursion_limit"] = 200  # Much higher limit for large project analysis
+                        
+                        # Add user message to conversation
+                        messages.append(HumanMessage(content=user_input))
+
+                        # Pass the entire conversation history to the agent
+                        response = await agent.ainvoke({
+                            "messages": messages
+                        }, config=config)
+                        token_usage = {
+                            "total_tokens": cb.total_tokens,
+                            "prompt_tokens": cb.prompt_tokens,
+                            "completion_tokens": cb.completion_tokens,
+                            "total_cost": cb.total_cost
+                        }
             
-            # Extract AI response content
-            ai_response = response["messages"][-1].content
-            
-            # Detect and display summarization info
-            detect_and_display_summarization(messages, response["messages"])
+            # Extract AI response content (only for agent mode)
+                        ai_response = response["messages"][-1].content
+                        
+                        # Detect and display summarization info
+                        detect_and_display_summarization(messages, response["messages"])
             
             # Display AI response
-            display_ai_response(ai_response, token_usage)
+                        display_ai_response(ai_response, token_usage)
             
             # Add AI response to messages and save to file
-            messages.append(AIMessage(content=ai_response))
-            memory_manager.save_conversation(current_thread_id, messages)
+                        messages.append(AIMessage(content=ai_response))
+                        memory_manager.save_conversation(current_thread_id, messages)
             console.print("[dim]✓ Conversation saved to persistent memory[/dim]")
             
         except Exception as e:
