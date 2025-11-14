@@ -42,14 +42,20 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
-def create_retriever_function(vector_store: 'VectorStore'):
-    """Create a LangChain-compatible retriever function"""
+def create_retriever_function(vector_store: 'VectorStore', similarity_threshold: float = 0.3):
+    """Create a LangChain-compatible retriever function with similarity threshold"""
     
     def retriever_function(query: str) -> List[Document]:
         """Retriever function compatible with LangChain"""
         try:
             results = vector_store.similarity_search(query, k=5)
-            return [doc for doc, _ in results]
+            # Filter results by similarity threshold
+            filtered_results = [
+                doc for doc, similarity in results 
+                if similarity >= similarity_threshold
+            ]
+            logger.info(f"RAG retrieval: {len(results)} results found, {len(filtered_results)} passed threshold {similarity_threshold}")
+            return filtered_results
         except Exception as e:
             logger.error(f"Error in retriever function: {e}")
             return []
@@ -60,8 +66,9 @@ def create_retriever_function(vector_store: 'VectorStore'):
 class RAGManager:
     """RAG Manager that bridges day19 vector store with LangChain 1.0.5"""
     
-    def __init__(self, index_path: str = "rag_index"):
+    def __init__(self, index_path: str = "rag_index", similarity_threshold: float = 0.3):
         self.index_path = Path(index_path)
+        self.similarity_threshold = similarity_threshold
         self.embedding_generator = None
         self.vector_store = None
         self.retriever = None
@@ -87,8 +94,8 @@ class RAGManager:
                 )
                 self.vector_store.load_from_json()
                 
-                # Create LangChain-compatible retriever
-                self.retriever = create_retriever_function(self.vector_store)
+                # Create LangChain-compatible retriever with similarity threshold
+                self.retriever = create_retriever_function(self.vector_store, self.similarity_threshold)
                 self.ready = True
                 
                 console.print(f"[green]✓[/green] RAG system ready with {len(self.vector_store.documents)} documents")
@@ -184,7 +191,7 @@ class RAGManager:
             logger.error(f"Indexing error: {e}")
             return False
     
-    def search_documents(self, query: str, k: int = 5) -> List[tuple[Document, float]]:
+    def search_documents(self, query: str, k: int = 5, apply_threshold: bool = True) -> List[tuple[Document, float]]:
         """Search documents in the RAG index"""
         if not self.ready:
             console.print("[yellow]⚠[/yellow] RAG system not ready")
@@ -192,6 +199,14 @@ class RAGManager:
         
         try:
             results = self.vector_store.similarity_search(query, k=k)
+            if apply_threshold:
+                # Filter by similarity threshold
+                filtered_results = [
+                    (doc, similarity) for doc, similarity in results 
+                    if similarity >= self.similarity_threshold
+                ]
+                logger.info(f"RAG search: {len(results)} results found, {len(filtered_results)} passed threshold {self.similarity_threshold}")
+                return filtered_results
             return results
         except Exception as e:
             console.print(f"[red]✗[/red] Search failed: {e}")
@@ -249,7 +264,7 @@ def should_use_rag(question: str) -> tuple[bool, str]:
 def format_docs(docs):
     """Format documents for RAG context"""
     if not docs:
-        return "No relevant documents found."
+        return "No relevant documents found that meet the relevance threshold."
     
     formatted_docs = []
     for i, doc in enumerate(docs, 1):

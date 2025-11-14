@@ -268,8 +268,9 @@ class SimpleMemoryManager:
 # Global memory manager
 memory_manager = SimpleMemoryManager()
 
-# Global RAG manager
-rag_manager = RAGManager()
+# Global RAG manager with configurable similarity threshold
+rag_similarity_threshold = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.3"))
+rag_manager = RAGManager(similarity_threshold=rag_similarity_threshold)
 
 async def load_mcp_tools() -> List[Any]:
     """Load all available MCP tools from enabled servers"""
@@ -417,6 +418,8 @@ def display_welcome():
     console.print("  • '/rag index <path>' - Index documents from file or directory")
     console.print("  • '/rag search <query>' - Search documents in RAG index")
     console.print("  • '/rag reset' - Reset RAG index")
+    console.print("  • '/rag threshold <value>' - Set similarity threshold (0.0-1.0)")
+    console.print("  • '/rag threshold show' - Show current similarity threshold")
     
     # Display RAG status
     if rag_manager.ready:
@@ -514,6 +517,7 @@ def handle_rag_command(command: str) -> bool:
         if stats.get('status') == 'ready':
             console.print(f"  • Total chunks: {stats.get('total_chunks', 0)}")
             console.print(f"  • Index path: {stats.get('index_path', 'N/A')}")
+            console.print(f"  • Similarity threshold: {rag_manager.similarity_threshold}")
             
             model_info = stats.get('model_info', {})
             if model_info:
@@ -593,9 +597,36 @@ def handle_rag_command(command: str) -> bool:
             console.print("Operation cancelled")
         return True
     
+    elif subcommand == "threshold":
+        if len(parts) < 3:
+            console.print(f"[red]Usage: /rag threshold <value|show>[/red]")
+            console.print(f"[dim]Current threshold: {rag_manager.similarity_threshold}[/dim]")
+            console.print(f"[dim]Example: /rag threshold 0.5[/dim]")
+            return True
+        
+        if parts[2] == "show":
+            console.print(f"[bold]Current RAG Similarity Threshold:[/bold] {rag_manager.similarity_threshold}")
+            console.print(f"[dim]Range: 0.0 (no filtering) to 1.0 (very strict)[/dim]")
+            console.print(f"[dim]Higher values = more relevant but fewer results[/dim]")
+        else:
+            try:
+                new_threshold = float(parts[2])
+                if 0.0 <= new_threshold <= 1.0:
+                    rag_manager.similarity_threshold = new_threshold
+                    # Recreate retriever with new threshold
+                    if rag_manager.vector_store:
+                        rag_manager.retriever = create_retriever_function(rag_manager.vector_store, new_threshold)
+                    console.print(f"[green]✓[/green] Similarity threshold updated to {new_threshold}")
+                    console.print("[dim]Note: This affects future RAG queries[/dim]")
+                else:
+                    console.print(f"[red]✗[/red] Threshold must be between 0.0 and 1.0")
+            except ValueError:
+                console.print(f"[red]✗[/red] Invalid threshold value: {parts[2]}")
+        return True
+    
     else:
         console.print(f"[red]Unknown RAG subcommand: {subcommand}[/red]")
-        console.print("[dim]Available subcommands: status, index, search, reset[/dim]")
+        console.print("[dim]Available subcommands: status, index, search, reset, threshold[/dim]")
         return True
 
 def handle_mcp_command(command: str) -> bool:
