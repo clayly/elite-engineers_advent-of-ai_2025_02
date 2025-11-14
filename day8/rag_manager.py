@@ -153,6 +153,26 @@ class RAGManager:
                 console.print("[yellow]⚠[/yellow] No documents found to process")
                 return False
             
+            # Enhance document metadata with full source paths
+            resolved_input_path = str(input_path_obj.resolve())
+            for doc in documents:
+                # Ensure source_path is added to metadata for citation tracking
+                if 'source' in doc.metadata:
+                    # If source is just filename, add full path if available
+                    source_name = doc.metadata['source']
+                    if input_path_obj.is_file():
+                        doc.metadata['source_path'] = resolved_input_path
+                    else:
+                        # For directory processing, try to reconstruct full path
+                        potential_path = Path(resolved_input_path) / source_name
+                        if potential_path.exists():
+                            doc.metadata['source_path'] = str(potential_path)
+                        else:
+                            doc.metadata['source_path'] = source_name
+                else:
+                    doc.metadata['source'] = resolved_input_path
+                    doc.metadata['source_path'] = resolved_input_path
+            
             # Add to vector store
             self.vector_store.add_documents(documents)
             
@@ -262,7 +282,7 @@ def should_use_rag(question: str) -> tuple[bool, str]:
 
 
 def format_docs(docs):
-    """Format documents for RAG context"""
+    """Format documents for RAG context with citation markers"""
     if not docs:
         return "No relevant documents found that meet the relevance threshold."
     
@@ -270,11 +290,55 @@ def format_docs(docs):
     for i, doc in enumerate(docs, 1):
         source = doc.metadata.get('source', f'Document {i}')
         content = doc.page_content
+        chunk_id = doc.metadata.get('chunk_id', 'unknown')
         
         # Truncate very long content
         if len(content) > 800:
             content = content[:800] + "..."
         
-        formatted_docs.append(f"Источник {i}: {source}\n{content}")
+        # Format with citation markers for the model to reference
+        formatted_docs.append(f"[Source {i}]: {source} (chunk {chunk_id})\n{content}")
     
     return "\n\n".join(formatted_docs)
+
+
+def get_citation_mapping(docs):
+    """Generate a mapping of citation numbers to document metadata"""
+    if not docs:
+        return {}
+    
+    mapping = {}
+    for i, doc in enumerate(docs, 1):
+        mapping[i] = {
+            'source': doc.metadata.get('source', f'Document {i}'),
+            'chunk_id': doc.metadata.get('chunk_id', 'unknown'),
+            'full_path': doc.metadata.get('source_path', 'not available')
+        }
+    return mapping
+
+
+def enhance_response_with_citations(response, docs_used):
+    """Enhance response by adding proper citation references at the end"""
+    if not docs_used:
+        return response
+    
+    # Generate references section
+    references = []
+    references.append("\n\n---\n**Sources:**")
+    
+    for i, doc in enumerate(docs_used, 1):
+        source = doc.metadata.get('source', f'Document {i}')
+        chunk_id = doc.metadata.get('chunk_id', 'unknown')
+        full_path = doc.metadata.get('source_path', 'N/A')
+        
+        reference_line = f"[{i}] {source} (chunk {chunk_id})"
+        if full_path != 'N/A' and full_path != source:
+            reference_line += f" - {full_path}"
+        
+        references.append(reference_line)
+    
+    # Add instruction about citations if none found
+    if "[" not in response or "]" not in response:
+        references.append("\n*Note: The response didn't explicitly cite specific sources.*")
+    
+    return response + "\n".join(references)

@@ -4,14 +4,16 @@
       "page_content": "Artificial Intelligence and Machine Learning\n\nArtificial Intelligence (AI) is a branch of computer science that aims to create intelligent machines that can perform tasks that typically require human intelligence. Machine Learning (ML) is a subset of AI that focuses on algorithms that can learn from data.\n\nKey Concepts in AI:\n1. Natural Language Processing (NLP) - Understanding and generating human language\n2. Computer Vision - Analyzing and interpreting visual information\n3. Robotics - Creating machines that can interact with the physical world\n4. Expert Systems - Programs that can make decisions in complex domains\n\nModern Applications:\n- Virtual assistants like Siri, Alexa, and Google Assistant\n- Recommendation systems used by Netflix and Amazon\n- Self-driving cars from Tesla and Waymo\n- Medical diagnosis systems that can detect diseases from images",
       "metadata": {
         "source": "sample_documents.txt",
-        "chunk_id": 0
+        "chunk_id": 0,
+        "source_path": "/home/clayly/projects/zva-no-project/elite-engineers_advent-of-ai_2025_02/day8/sample_documents.txt"
       }
     },
     {
       "page_content": "The future of AI includes more advanced general intelligence, better human-AI collaboration, and ethical considerations around AI development and deployment.",
       "metadata": {
         "source": "sample_documents.txt",
-        "chunk_id": 1
+        "chunk_id": 1,
+        "source_path": "/home/clayly/projects/zva-no-project/elite-engineers_advent-of-ai_2025_02/day8/sample_documents.txt"
       }
     }
   ],

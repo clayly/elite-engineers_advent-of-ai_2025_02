@@ -272,6 +272,9 @@ memory_manager = SimpleMemoryManager()
 rag_similarity_threshold = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.3"))
 rag_manager = RAGManager(similarity_threshold=rag_similarity_threshold)
 
+# Global RAG prompt template
+rag_prompt = None
+
 async def load_mcp_tools() -> List[Any]:
     """Load all available MCP tools from enabled servers"""
     enabled_servers = mcp_manager.get_enabled_servers()
@@ -318,15 +321,25 @@ async def load_mcp_tools() -> List[Any]:
 def initialize_rag_chains(llm):
     """Initialize RAG and non-RAG chains"""
     
-    # RAG Prompt Template
+    # Initialize global RAG prompt template
+    global rag_prompt
     rag_prompt = ChatPromptTemplate.from_messages([
         ("system", """You are a helpful AI assistant with access to relevant documents.
 Answer the question using ONLY the following context. If the context doesn't contain enough information, say so clearly.
 
+CRITICAL INSTRUCTION: You MUST cite your sources using [1], [2], [3], etc. reference markers whenever you use information from a specific document. Place the citation immediately after the relevant information.
+
+EXAMPLE of CORRECT citations:
+- "AI is a branch of computer science [1] that aims to create intelligent machines [2]."
+- "Key concepts include NLP [1] and computer vision [2]."
+
+INCORRECT (missing citations):
+- "AI is a branch of computer science that aims to create intelligent machines."
+
 Context:
 {context}
 
-Previous conversation context and tools are also available to you. You can use MCP tools and your general knowledge when needed."""),
+Previous conversation context and tools are also available to you. You can use MCP tools and your general knowledge when needed, but you must cite document sources when using the provided context."""),
         ("human", "{question}")
     ])
     
@@ -823,8 +836,34 @@ async def main():
             if use_rag and rag_chain:
                 # Use RAG chain
                 with console.status("[bold blue]🔍 Searching documents...[/bold blue]", spinner="dots"):
+                    # Get retrieved documents for citation tracking
+                    retrieved_docs = []
+                    if rag_manager.get_retriever():
+                        try:
+                            retrieved_docs = rag_manager.get_retriever()(cleaned_question)
+                            console.print(f"[dim]✓ Retrieved {len(retrieved_docs)} relevant documents[/dim]")
+                        except Exception as e:
+                            console.print(f"[yellow]⚠[/yellow] Error retrieving documents: {e}")
+                    
+                    # Format context separately to pass to chain
+                    from rag_manager import format_docs
+                    context = format_docs(retrieved_docs)
+                    
                     with get_openai_callback() as cb:
-                        ai_response = rag_chain.invoke(cleaned_question)
+                        # Create a modified chain that uses pre-retrieved documents
+                        from langchain_core.runnables import RunnablePassthrough
+                        from langchain_core.prompts import ChatPromptTemplate
+                        from langchain_core.output_parsers import StrOutputParser
+                        
+                        # Use the pre-formatted context instead of retriever
+                        temp_chain = (
+                            {"context": lambda x: context, "question": RunnablePassthrough()}
+                            | rag_prompt
+                            | llm
+                            | StrOutputParser()
+                        )
+                        
+                        ai_response = temp_chain.invoke(cleaned_question)
                         token_usage = {
                             "total_tokens": cb.total_tokens,
                             "prompt_tokens": cb.prompt_tokens,
@@ -832,12 +871,16 @@ async def main():
                             "total_cost": cb.total_cost
                         }
                 
+                # Enhance response with citations
+                from rag_manager import enhance_response_with_citations
+                enhanced_response = enhance_response_with_citations(ai_response, retrieved_docs)
+                
                 # Add both original user input and RAG response to conversation
                 messages.append(HumanMessage(content=user_input))
-                messages.append(AIMessage(content=ai_response))
+                messages.append(AIMessage(content=enhanced_response))
                 
                 # Display AI response
-                display_ai_response(ai_response, token_usage)
+                display_ai_response(enhanced_response, token_usage)
                 
                 # Save conversation with RAG context
                 memory_manager.save_conversation(current_thread_id, messages)
