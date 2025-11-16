@@ -77,6 +77,14 @@ The application will start and prompt you for input.
   - `/mcp disable <name>` - Disable an MCP server
   - `/mcp unregister <name>` - Remove an MCP server
 
+- **RAG (Retrieval-Augmented Generation)**: Use `/rag` commands to work with document indexing and retrieval:
+  - `/rag status` - Show RAG index status (indexed chunks, model info, similarity threshold)
+  - `/rag index <path>` - Index documents from file or directory (documents will be chunked and stored in vector DB)
+  - `/rag search <query>` - Search documents in RAG index and display results with similarity scores
+  - `/rag reset` - Reset RAG index (permanent deletion, requires confirmation)
+  - `/rag threshold <value>` - Set similarity threshold (0.0-1.0, higher = more strict relevance)
+  - `/rag threshold show` - Show current similarity threshold setting
+
 For each response, the application will display token usage information:
 - Prompt tokens: Number of tokens in the input (including conversation history)
 - Completion tokens: Number of tokens in the AI's response

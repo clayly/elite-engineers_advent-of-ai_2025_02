@@ -1,6 +1,6 @@
 {
   "total_documents": 1,
-  "total_chunks": 2,
+  "total_chunks": 1,
   "model_info": {
     "model_name": "sentence-transformers/all-MiniLM-L6-v2",
     "model_type": "sentence-transformers"
@@ -9,5 +9,5 @@
     "chunk_size": 1000,
     "chunk_overlap": 200
   },
-  "input_path": "/home/clayly/projects/zva-no-project/elite-engineers_advent-of-ai_2025_02/day8/sample_documents.txt"
+  "input_path": "/home/clayly/projects/zva-no-project/elite-engineers_advent-of-ai_2025_02/day8/documents"
 }
