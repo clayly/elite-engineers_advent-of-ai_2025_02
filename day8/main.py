@@ -41,6 +41,13 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.store.memory import InMemoryStore
 from langchain_core.runnables import RunnableConfig
 
+# Voice input imports
+try:
+    from microphone_input import MicrophoneInput
+    MICROPHONE_AVAILABLE = True
+except ImportError:
+    MICROPHONE_AVAILABLE = False
+
 # Load environment variables
 load_dotenv()
 
@@ -60,6 +67,10 @@ MCP_CONFIG_PATH = Path(__file__).parent / "mcp.json"
 
 # Memory database path
 MEMORY_DB_PATH = Path(__file__).parent / "chat_memory.db"
+
+# Voice mode settings
+microphone: Optional[MicrophoneInput] = None
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
 
 class MCPServerManager:
     """Manages MCP server registration and lifecycle"""
@@ -434,6 +445,15 @@ def display_welcome():
     console.print("  • '/rag threshold <value>' - Set similarity threshold (0.0-1.0)")
     console.print("  • '/rag threshold show' - Show current similarity threshold")
     
+    # Display voice commands if available
+    if MICROPHONE_AVAILABLE:
+        console.print("\n[bold]Voice Commands:[/bold]")
+        console.print("  • '/voice' or '/voice record' - Record and transcribe speech")
+        console.print("  • '/voice devices' - List available microphone devices")
+    else:
+        console.print("\n[yellow]⚠[/yellow] Voice input not available (missing dependencies)")
+        console.print("[dim]Install with: uv pip install sounddevice soundfile[/dim]")
+    
     # Display RAG status
     if rag_manager.ready:
         stats = rag_manager.get_stats()
@@ -642,6 +662,61 @@ def handle_rag_command(command: str) -> bool:
         console.print("[dim]Available subcommands: status, index, search, reset, threshold[/dim]")
         return True
 
+def handle_voice_command(command: str) -> Optional[str]:
+    """Handle voice input commands. Returns transcribed text if recording, True if command handled, False otherwise."""
+    global microphone
+    
+    if not command.startswith("/voice"):
+        return False
+    
+    parts = command.strip().split(maxsplit=1)
+    if len(parts) < 2:
+        subcommand = ""
+    else:
+        subcommand = parts[1].lower()
+    
+    # Record and transcribe (/voice or /voice record)
+    if not subcommand or subcommand == "record":
+        if not MICROPHONE_AVAILABLE:
+            console.print("[red]✗[/red] Voice input not available. Install dependencies:")
+            console.print("[dim]uv pip install sounddevice soundfile[/dim]")
+            return True
+        
+        try:
+            if microphone is None:
+                microphone = MicrophoneInput(model_size=WHISPER_MODEL_SIZE)
+            
+            console.print("[yellow]Recording... Press Enter when done speaking![/yellow]")
+            
+            text = microphone.record_and_transcribe_until_enter()
+            if text.strip():
+                console.print(f"[green]✓[/green] Transcribed: \"{text}\"")
+                return text  # Return the transcribed text for processing
+            else:
+                console.print("[yellow]⚠[/yellow] No speech detected, try again")
+        except Exception as e:
+            console.print(f"[red]✗[/red] Recording failed: {e}")
+            console.print("[dim]Make sure your microphone is connected and accessible[/dim]")
+        return True
+    
+    elif subcommand == "devices":
+        if not MICROPHONE_AVAILABLE:
+            console.print("[red]✗[/red] Voice input not available")
+            return True
+        
+        try:
+            if microphone is None:
+                microphone = MicrophoneInput(model_size=WHISPER_MODEL_SIZE)
+            microphone.list_devices()
+        except Exception as e:
+            console.print(f"[red]✗[/red] Error listing devices: {e}")
+        return True
+    
+    else:
+        console.print(f"[red]Unknown voice subcommand: {subcommand}[/red]")
+        console.print("[dim]Available: /voice (record), /voice devices[/dim]")
+        return True
+
 def handle_mcp_command(command: str) -> bool:
     """Handle MCP-related commands. Returns True if command was handled."""
     parts = command.strip().split()
@@ -742,6 +817,8 @@ def detect_and_display_summarization(original_messages: list, response_messages:
 
 async def main():
     """Main chat loop"""
+    global microphone
+    
     # Check for API key
     if not os.getenv("OPENAI_API_KEY"):
         console.print("[bold red]Error:[/bold red] OPENAI_API_KEY not found in environment variables")
@@ -826,6 +903,16 @@ async def main():
         # Handle RAG commands
         if user_input.startswith('/rag'):
             if handle_rag_command(user_input):
+                continue  # Command handled, continue to next iteration
+
+        # Handle voice commands
+        if user_input.startswith('/voice'):
+            voice_result = handle_voice_command(user_input)
+            # If voice command returns text (from recording), use it as input
+            if isinstance(voice_result, str) and voice_result.strip():
+                user_input = voice_result
+                console.print(f"[dim]Using voice input: {user_input}[/dim]")
+            else:
                 continue  # Command handled, continue to next iteration
 
         # Check for RAG trigger and process accordingly

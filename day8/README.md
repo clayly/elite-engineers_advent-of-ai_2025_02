@@ -61,7 +61,7 @@ Run the chat application:
 
 ```bash
 cd day8
-.venv/bin/python main.py
+uv run python main.py
 ```
 
 The application will start and prompt you for input.
@@ -84,6 +84,10 @@ The application will start and prompt you for input.
   - `/rag reset` - Reset RAG index (permanent deletion, requires confirmation)
   - `/rag threshold <value>` - Set similarity threshold (0.0-1.0, higher = more strict relevance)
   - `/rag threshold show` - Show current similarity threshold setting
+
+- **Voice Input**: Use `/voice` commands for speech-to-text input:
+  - `/voice` or `/voice record` - Record audio (press Enter when done) and transcribe it to text
+  - `/voice devices` - List available microphone devices
 
 For each response, the application will display token usage information:
 - Prompt tokens: Number of tokens in the input (including conversation history)
