@@ -68,9 +68,41 @@ MCP_CONFIG_PATH = Path(__file__).parent / "mcp.json"
 # Memory database path
 MEMORY_DB_PATH = Path(__file__).parent / "chat_memory.db"
 
+# User profile path
+USER_PROFILE_PATH = Path(__file__).parent / "user_profile.md"
+
 # Voice mode settings
 microphone: Optional[MicrophoneInput] = None
 WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "base")
+
+class UserProfileManager:
+    
+    def __init__(self, profile_path: Path = USER_PROFILE_PATH):
+        self.profile_path = profile_path
+        self.profile_content = ""
+        self.load_profile()
+    
+    def load_profile(self) -> None:
+        try:
+            if self.profile_path.exists():
+                with open(self.profile_path, 'r', encoding='utf-8') as f:
+                    self.profile_content = f.read()
+                console.print(f"[green]✓[/green] Loaded user profile from {self.profile_path}")
+            else:
+                console.print(f"[yellow]⚠[/yellow] User profile not found at {self.profile_path}")
+                self.profile_content = ""
+        except Exception as e:
+            console.print(f"[red]✗[/red] Error loading user profile: {e}")
+            self.profile_content = ""
+    
+    def get_profile_context(self) -> str:
+        if not self.profile_content:
+            return ""
+        
+        return f"\n\n## User Profile and Personalization\n{self.profile_content}"
+    
+    def reload_profile(self) -> None:
+        self.load_profile()
 
 class MCPServerManager:
     """Manages MCP server registration and lifecycle"""
@@ -816,20 +848,18 @@ def detect_and_display_summarization(original_messages: list, response_messages:
                     break
 
 async def main():
-    """Main chat loop"""
     global microphone
     
-    # Check for API key
     if not os.getenv("OPENAI_API_KEY"):
         console.print("[bold red]Error:[/bold red] OPENAI_API_KEY not found in environment variables")
         console.print("Please set your API key in a .env file")
         sys.exit(1)
 
-    # Initialize components
     display_welcome()
     llm = initialize_llm()
+    
+    profile_manager = UserProfileManager()
 
-    # Load MCP tools
     console.print("[bold blue]Loading MCP tools...[/bold blue]")
     mcp_tools = await load_mcp_tools()
 
@@ -871,7 +901,8 @@ async def main():
         console.print("[dim]Type '/session info' for more details about this session[/dim]")
     else:
         # Start new conversation with system message
-        messages = [SystemMessage(content=SYSTEM_MESSAGE)]
+        personalized_system_message = SYSTEM_MESSAGE + profile_manager.get_profile_context()
+        messages = [SystemMessage(content=personalized_system_message)]
         console.print("[dim]Starting new conversation[/dim]")
         console.print("[dim]Tip: Your conversations are now automatically saved![/dim]")
     
@@ -897,8 +928,9 @@ async def main():
                 # Load conversation history for the new session
                 messages = memory_manager.get_conversation_history(current_thread_id)
                 if not messages:
-                    messages = [SystemMessage(content=SYSTEM_MESSAGE)]
-                continue  # Command handled, continue to next iteration
+                    personalized_system_message = SYSTEM_MESSAGE + profile_manager.get_profile_context()
+                    messages = [SystemMessage(content=personalized_system_message)]
+                continue
 
         # Handle RAG commands
         if user_input.startswith('/rag'):
