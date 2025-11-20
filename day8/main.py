@@ -14,6 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_core.callbacks import StreamingStdOutCallbackHandler
 from langchain_community.callbacks import get_openai_callback
@@ -55,7 +56,7 @@ load_dotenv()
 console = Console()
 
 # System message for the AI
-SYSTEM_MESSAGE = """You are a helpful AI assistant powered by z.ai's GLM-4.6 model.
+SYSTEM_MESSAGE = """You are a helpful AI assistant.
 You can answer questions, help with tasks, and have engaging conversations.
 You have access to various tools through the Model Context Protocol (MCP) that can help you perform actions like file operations, git commands, and web searches.
 Use these tools when they are relevant to the user's request.
@@ -415,15 +416,28 @@ Previous conversation context and tools are also available to you. You can use M
     return rag_chain, no_rag_chain
 
 def initialize_llm():
-    """Initialize the LLM with z.ai API configuration"""
-    return ChatOpenAI(
-        model=os.getenv("MODEL_NAME", "glm-4.6"),
-        temperature=float(os.getenv("TEMPERATURE", "0.7")),
-        max_tokens=int(os.getenv("MAX_TOKENS", "1000")),
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        openai_api_base=os.getenv("OPENAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4/"),
-        streaming=False  # Set to True for streaming output
-    )
+    """Initialize the LLM based on configuration (OpenAI API or Ollama)"""
+    # Check if we should use Ollama
+    use_ollama = os.getenv("USE_OLLAMA", "false").lower() == "true"
+    
+    if use_ollama:
+        # Configure for Ollama
+        return ChatOllama(
+            model=os.getenv("OLLAMA_MODEL_NAME", "llama3.1"),
+            temperature=float(os.getenv("TEMPERATURE", "0.7")),
+            max_tokens=int(os.getenv("MAX_TOKENS", "1000")),
+            base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+        )
+    else:
+        # Default to OpenAI API (z.ai)
+        return ChatOpenAI(
+            model=os.getenv("MODEL_NAME", "glm-4.6"),
+            temperature=float(os.getenv("TEMPERATURE", "0.7")),
+            max_tokens=int(os.getenv("MAX_TOKENS", "1000")),
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            openai_api_base=os.getenv("OPENAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4/"),
+            streaming=False  # Set to True for streaming output
+        )
 
 def display_session_info():
     """Display session and memory information"""
